@@ -22,6 +22,28 @@ if (typeof StellarWalletsKitApi.init === "function") {
     modules: defaultModules(),
   });
 }
+  Networks,
+  type ISupportedWallet,
+} from "@creit.tech/stellar-wallets-kit";
+import { FreighterModule } from "@creit.tech/stellar-wallets-kit/modules/freighter";
+import { AlbedoModule } from "@creit.tech/stellar-wallets-kit/modules/albedo";
+import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
+import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
+import { HotWalletModule } from "@creit.tech/stellar-wallets-kit/modules/hotwallet";
+import { Horizon } from "@stellar/stellar-sdk";
+import { horizonUrl, stellarNetwork, stellarWalletNetwork } from "../lib/env";
+
+// Initialise the kit with the supported wallet modules.
+StellarWalletsKit.init({
+  network: stellarWalletNetwork as Networks,
+  modules: [
+    new FreighterModule(),
+    new AlbedoModule(),
+    new xBullModule(),
+    new LobstrModule(),
+    new HotWalletModule(),
+  ],
+});
 
 function getHorizonHost(mode: string) {
   switch (mode) {
@@ -44,7 +66,6 @@ export const fetchBalance = async (address: string) => {
     const { balances } = await horizon.accounts().accountId(address).call();
     return { ok: true, balances };
   } catch (e) {
-    // Re-throw the error so callers can handle it appropriately
     console.error("Error fetching balance:", e);
     throw e;
   }
@@ -96,6 +117,11 @@ export const wallet = {
 export const connectWallet = async (...args: any[]) => {
   const openModal = kitInstance.openModal ?? StellarWalletsKitApi.authModal;
   return openModal(...args);
+export const wallet = StellarWalletsKit;
+
+// Restore removed connectWallet export for backward compatibility
+export const connectWallet = async (...args: any[]) => {
+  return (StellarWalletsKit as any).openModal(...args);
 };
 
 /**
@@ -108,4 +134,5 @@ export const getSupportedWallets = (): Promise<ISupportedWallet[]> => {
     kitInstance.getSupportedWallets ??
     StellarWalletsKitApi.refreshSupportedWallets;
   return getWallets.call(kitInstance);
+  return StellarWalletsKit.refreshSupportedWallets();
 };
