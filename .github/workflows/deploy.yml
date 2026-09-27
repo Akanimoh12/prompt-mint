@@ -81,6 +81,7 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
       - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
         uses: vercel/actions/cli@main
         with:
           args: deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
@@ -134,16 +135,16 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v6
         with:
-          path: \~/.cargo/registry
-          key: \( {{ runner.os }}-cargo-registry- \){{ hashFiles('**/Cargo.lock') }}
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
 
       - name: Cache cargo index
         uses: actions/cache@v6
         with:
-          path: \~/.cargo/git
-          key: \( {{ runner.os }}-cargo-git- \){{ hashFiles('**/Cargo.lock') }}
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-git-
 
@@ -151,7 +152,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: target
-          key: \( {{ runner.os }}-cargo-build-target- \){{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-target-
 
