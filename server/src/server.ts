@@ -15,6 +15,7 @@ import { governanceRouter } from "./routes/governanceRoutes"; // Issue #113
 import { appealRouter } from "./routes/appealRoutes";
 import { robotsRouter } from "./routes/robotsRoutes";
 import { licenseTermsRouter } from "./routes/licenseTermsRoutes";
+import { notificationRouter } from "./routes/notificationRoutes";
 import { runBackup, getBackupHealth } from "./services/backupService";
 import { runRestoreDrill } from "./services/restoreService";
 import { blobRouter } from "./routes/blobRoutes";
@@ -90,6 +91,9 @@ app.use("/api/improve-proxy", proxyrouter);
 app.use("/api/prompts", promptRouter);
 
 app.use("/api/user", userRouter);
+
+// #752 - notification feed, read receipts, and history export.
+app.use("/api/notifications", notificationRouter);
 
 app.use("/api/chat", chatRouter);
 app.use("/api/webhooks", webhookRouter);
