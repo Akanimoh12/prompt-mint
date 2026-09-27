@@ -55,3 +55,32 @@ A circular module dependency introduced in the analytics widget component graph 
    * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
    * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
 3. **Patch Commit:** Created and verified hotfix breaking the circular dependency (`fix(frontend): resolve analytics module circular dependency`).
+
+# Incident Timeline & Resolution Report
+
+**Incident ID:** `#833` (SEV-1)
+**Failed SHA:** `545d2eec44e643f551ba6731cc0ae9f5e5ee4ae0` (Branch: `main`)
+**Trigger:** Automated Rollback System (`docs/operations/auto-rollback.md`)
+**Actor:** `barry01-hash`
+
+---
+
+### Incident Timeline (UTC)
+
+* **03:45:12** — GitHub Actions workflow `Deploy - Frontend to Vercel and Artifacts` initiated on commit `545d2ee`.
+* **03:47:50** — Build step failed during static asset generation due to an undefined environment variable (`NEXT_PUBLIC_API_BASE_URL`) in the production build config.
+* **03:48:05** — Vercel deployment hook failed with exit status code 1 (`conclusion: failure`).
+* **03:48:20** — Automated rollback daemon triggered, reverting active routing pointers to the previous stable release artifact.
+* **03:49:55** — Health check probes (`/api/health`, `/api/status`) verified 100% operational status across all edge endpoints.
+
+---
+
+### Root Cause Analysis
+An unanchored environment variable reference (`NEXT_PUBLIC_API_BASE_URL`) missing from the Vercel project settings for the preview/production build pipeline caused a fatal build-time crash during static site generation.
+
+### Corrective Actions & Verification
+1. **Rollback Verification:** Production confirmed serving last known-good stable build artifact.
+2. **Health Check Validation:**
+   * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
+   * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
+3. **Patch Commit:** Verified environment variable injection and updated build configuration defaults (`fix(ops): restore missing production environment variables`).
