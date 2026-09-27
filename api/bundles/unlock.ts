@@ -40,7 +40,7 @@ import {
   recordSuccessfulAuth,
   verifyCaptchaToken,
 } from "../../src/lib/auth/abuseProtection";
-import { checkReplayProtection } from "../../src/lib/observability/replayProtection";
+import { checkUnlockReplayProtection } from "../../src/lib/observability/replayProtection";
 import { metrics } from "../../src/lib/observability/metrics";
 import { dispatchEvent } from "../../server/src/services/webhookDispatcher";
 import { recordAuditEvent } from "../../server/src/services/auditTrail";
@@ -333,13 +333,16 @@ async function handler(req: any, res: any) {
     }
 
     // 2. Replay protection
-    const replayCheck = await checkReplayProtection(
-      String(token),
-      String(signedMessage),
-    );
+    const replayCheck = await checkUnlockReplayProtection({
+      nonce: payload.nonce,
+      expiresAt: payload.expiresAt,
+      address: String(address),
+      token: String(token),
+      signedMessage: String(signedMessage),
+    });
     if (!replayCheck.valid) {
       req.logger.warn({ address, bundleId }, "Replay attack detected");
-      metrics.trackUnlockFailure(String(address), String(bundleId), "replay_detected");
+      metrics.trackUnlockFailure(String(address), String(bundleId), replayCheck.reason ?? "replay_detected");
       void recordAuditEvent({
         action: "bundle_unlock_replay_detected",
         result: "blocked",
@@ -347,11 +350,11 @@ async function handler(req: any, res: any) {
         walletAddress: String(address),
         requestId: req.requestId ?? null,
         clientIp,
-        reason: "replay_attack",
+        reason: replayCheck.reason ?? "replay_attack",
       });
       res.status(400).json(
         apiError(
-          ErrorCode.TEMPORARY_FAILURE,
+          ErrorCode.CHALLENGE_REPLAY,
           "This unlock request has already been processed.",
         ),
       );
@@ -492,10 +495,13 @@ async function handler(req: any, res: any) {
       reason: isExpired ? "expired_challenge" : "error",
     });
 
-    const errorCode = isExpired
-      ? ErrorCode.TEMPORARY_FAILURE
-      : ErrorCode.CONFIGURATION_ERROR;
-    res.status(isExpired ? 400 : 500).json(apiError(errorCode, message));
+    if (isExpired) {
+      res.status(401).json(
+        apiError(ErrorCode.CHALLENGE_EXPIRED, "The challenge token has expired. Please request a new one."),
+      );
+    } else {
+      res.status(500).json(apiError(ErrorCode.CONFIGURATION_ERROR, message));
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { securityHeaders } from "./securityHeaders";
 import { securityHeaders, CSP_DIRECTIVES } from "./securityHeaders";
 
 describe("securityHeaders middleware", () => {
