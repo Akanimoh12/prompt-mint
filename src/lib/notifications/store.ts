@@ -55,6 +55,14 @@ export interface NotificationRecord {
    * from repeated transport deliveries).
    */
   dedupeKey?: string;
+  /** Associated prompt identifier for grouping (#747). */
+  promptId?: string;
+  /** Associated prompt title for group headers (#747). */
+  promptTitle?: string;
+  /** Importance classification (#746). */
+  importance?: "critical" | "high" | "medium" | "low";
+  /** Numerical score 0-100 (#746). */
+  importanceScore?: number;
 }
 
 export type NotificationAction =
