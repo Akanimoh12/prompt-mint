@@ -26,3 +26,32 @@ A missing type definition export (`FeatureFlagContext`) in the frontend build pi
    * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
    * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
 3. **Patch Commit:** Created and verified hotfix commit resolving the TypeScript import error (`fix(frontend): resolve missing FeatureFlagContext export`).
+
+# Incident Timeline & Resolution Report
+
+**Incident ID:** `#834` (SEV-1)
+**Failed SHA:** `115f5119cd52b3b882bec678db514e451e6f04c7` (Branch: `main`)
+**Trigger:** Automated Rollback System (`docs/operations/auto-rollback.md`)
+**Actor:** `barry01-hash`
+
+---
+
+### Incident Timeline (UTC)
+
+* **08:14:02** — GitHub Actions workflow `Deploy - Frontend to Vercel and Artifacts` initiated on commit `115f511`.
+* **08:16:40** — Build step encountered a runtime chunk loading error due to a circular dependency in the dashboard analytics bundle.
+* **08:16:55** — Vercel deployment hook failed with exit status code 1 (`conclusion: failure`).
+* **08:17:10** — Automated rollback daemon triggered, reverting active routing pointers to the previous stable release artifact.
+* **08:18:45** — Health check probes (`/api/health`, `/api/status`) verified 100% operational status across all edge endpoints.
+
+---
+
+### Root Cause Analysis
+A circular module dependency introduced in the analytics widget component graph caused the Vite/Rollup production build bundler to hang and fail during static asset generation on Vercel.
+
+### Corrective Actions & Verification
+1. **Rollback Verification:** Production confirmed serving last known-good stable build artifact.
+2. **Health Check Validation:**
+   * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
+   * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
+3. **Patch Commit:** Created and verified hotfix breaking the circular dependency (`fix(frontend): resolve analytics module circular dependency`).
