@@ -1,5 +1,27 @@
 import {
   StellarWalletsKit,
+  Networks as WalletNetwork,
+  type ISupportedWallet,
+} from "@creit.tech/stellar-wallets-kit";
+import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
+import { Horizon } from "@stellar/stellar-sdk";
+import { horizonUrl, stellarNetwork, stellarWalletNetwork } from "../lib/env";
+
+// defaultModules() returns the wallets that do not need additional app-specific configuration.
+export const kit: StellarWalletsKit = new (StellarWalletsKit as any)({
+  network: stellarWalletNetwork as WalletNetwork,
+  modules: defaultModules(),
+}) as StellarWalletsKit;
+
+const StellarWalletsKitApi = StellarWalletsKit as any;
+const kitInstance = kit as any;
+
+if (typeof StellarWalletsKitApi.init === "function") {
+  StellarWalletsKitApi.init({
+    network: stellarWalletNetwork as WalletNetwork,
+    modules: defaultModules(),
+  });
+}
   Networks,
   type ISupportedWallet,
 } from "@creit.tech/stellar-wallets-kit";
@@ -49,8 +71,52 @@ export const fetchBalance = async (address: string) => {
   }
 };
 
-export type Balance = Awaited<ReturnType<typeof fetchBalance>>["balances"][number];
+export type Balance = Awaited<
+  ReturnType<typeof fetchBalance>
+>["balances"][number];
 
+export const wallet = {
+  setWallet: (id: string) =>
+    (kitInstance.setWallet ?? StellarWalletsKitApi.setWallet).call(
+      kitInstance,
+      id,
+    ),
+  getAddress: () =>
+    (kitInstance.getAddress ?? StellarWalletsKitApi.getAddress).call(
+      kitInstance,
+    ),
+  getNetwork: () =>
+    (kitInstance.getNetwork ?? StellarWalletsKitApi.getNetwork).call(
+      kitInstance,
+    ),
+  signTransaction: (
+    xdr: string,
+    opts?: Parameters<typeof StellarWalletsKit.signTransaction>[1],
+  ) =>
+    (kitInstance.signTransaction ?? StellarWalletsKitApi.signTransaction).call(
+      kitInstance,
+      xdr,
+      opts,
+    ),
+  signMessage: (
+    message: string,
+    opts?: Parameters<typeof StellarWalletsKit.signMessage>[1],
+  ) =>
+    (kitInstance.signMessage ?? StellarWalletsKitApi.signMessage).call(
+      kitInstance,
+      message,
+      opts,
+    ),
+  disconnect: () =>
+    (kitInstance.disconnect ?? StellarWalletsKitApi.disconnect).call(
+      kitInstance,
+    ),
+};
+
+// Restore removed connectWallet export for backward compatibility
+export const connectWallet = async (...args: any[]) => {
+  const openModal = kitInstance.openModal ?? StellarWalletsKitApi.authModal;
+  return openModal(...args);
 export const wallet = StellarWalletsKit;
 
 // Restore removed connectWallet export for backward compatibility
@@ -64,5 +130,9 @@ export const connectWallet = async (...args: any[]) => {
  * the connection modal for wallets that aren't usable.
  */
 export const getSupportedWallets = (): Promise<ISupportedWallet[]> => {
+  const getWallets =
+    kitInstance.getSupportedWallets ??
+    StellarWalletsKitApi.refreshSupportedWallets;
+  return getWallets.call(kitInstance);
   return StellarWalletsKit.refreshSupportedWallets();
 };
