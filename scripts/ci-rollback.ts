@@ -2,7 +2,7 @@
 
 import { runRollbackCli } from "../src/lib/ops/rollbackCli";
 
-rllBackCli()
+runRollbackCli()
   .then(({ ok, result }) => {
     console.log(JSON.stringify(result, null, 2));
     // A missing last-known-good is an expected incident-only outcome,
