@@ -56,3 +56,19 @@ If you only need creator-facing events, register a webhook rather than polling:
 [webhook signatures](../server/docs/webhook-signatures.md) and the
 webhook section of [payload versioning](./payload-versioning.md). Only the
 events marked as emitted by the indexer in the catalog are delivered.
+
+### Manage subscriptions from the console
+
+The webhook management console (`src/pages/settings/WebhookManagement.tsx`) has a
+**Subscriptions** tab backed by
+[`WebhookSubscriptions`](../src/components/webhooks/WebhookSubscriptions.tsx).
+Connect a wallet and it will:
+
+- list the endpoint registered for that wallet (`GET /api/webhooks?walletAddress=...`),
+- register or update it (`POST /api/webhooks`) with the contract events you select,
+- delete it (`DELETE /api/webhooks`), and
+- reveal the signing secret once, immediately after a create or update.
+
+Subscriptions are wallet-scoped: one endpoint per wallet address. The tab shows
+back exactly what the API stored, so re-select an event if it does not appear
+after saving.
