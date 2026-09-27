@@ -1,3 +1,5 @@
+/* global describe, it, expect */
+
 describe("Tag Management", () => {
   describe("Add Tags", () => {
     it("should add new tags to prompt", () => {

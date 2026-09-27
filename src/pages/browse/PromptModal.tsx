@@ -6,10 +6,10 @@ import { FeeEstimateBanner } from "@/components/FeeEstimateBanner";
 import { PromptHashClient } from "../../lib/stellar/promptHashClient";
 import { unlockPrompt } from "../../lib/prompts/unlock";
 import { Skeleton } from "../../components/Skeleton";
+import { PromptModalSkeleton } from "@/components/MarketplaceSkeletons";
 import { StatusBanner } from "../../components/StatusBanner";
 import { UnlockExplainer } from "../../components/UnlockExplainer";
 import { copyToClipboard } from "../../lib/clipboard/secureClipboard";
-import { MarkdownPreview } from "../../components/MarkdownPreview";
 import { WatermarkedPreview } from "../../components/WatermarkedPreview";
 import { CopyButton } from "../../components/CopyButton";
 import {
@@ -43,6 +43,7 @@ import { browserStellarConfig } from "../../lib/stellar/browserConfig";
 import { NetworkMismatchBanner } from "../../components/wallet/NetworkMismatchBanner";
 import { detectNetworkMismatch } from "../../lib/wallet/networkDetection";
 import { CurrencyPrice } from "../../components/CurrencyPrice";
+import { AddressTooltip, ContractStateTooltip } from "@/components/ui/Tooltip";
 import { useNetworkState } from "@/hooks/useNetworkState";
 import { useAddToCart } from "@/hooks/useAddToCart";
 import { GiftPrompt } from "../../components/GiftPrompt";
@@ -67,6 +68,15 @@ export type BuyerStatus =
   | "SUCCESS"
   | "ERROR";
 
+function isWalletDisconnectUnlockError(error: Error | null) {
+  const message = error?.message.toLowerCase() ?? "";
+  return (
+    error?.name === "WalletDisconnectedDuringUnlockError" ||
+    message.includes("wallet disconnected during unlock") ||
+    message.includes("wallet not connected")
+  );
+}
+
 interface PromptModalProps {
   itemId: string;
   isOpen: boolean;
@@ -85,12 +95,7 @@ const PromptMetadataSection: React.FC<{ itemId: string; status: BuyerStatus }> =
   });
 
   if (isLoading) {
-    return (
-      <div className="mb-6 space-y-3">
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-3/4" />
-      </div>
-    );
+    return <PromptModalSkeleton />;
   }
 
   if (!prompt) return null;
@@ -124,13 +129,12 @@ const PromptMetadataSection: React.FC<{ itemId: string; status: BuyerStatus }> =
               <Link
                 to={creatorHref}
                 className="text-xs font-mono text-cyan-200 truncate hover:text-cyan-100 underline-offset-2 hover:underline"
-                title={prompt.creator}
               >
-                {prompt.creator.slice(0, 8)}...{prompt.creator.slice(-4)}
+                <AddressTooltip address={prompt.creator} />
               </Link>
             ) : (
-              <p className="text-xs font-mono text-white truncate" title={prompt.creator}>
-                {prompt.creator.slice(0, 8)}...{prompt.creator.slice(-4)}
+              <p className="text-xs font-mono text-white truncate">
+                <AddressTooltip address={prompt.creator} />
               </p>
             )}
             <CopyButton
@@ -232,7 +236,13 @@ const PromptMetadataSection: React.FC<{ itemId: string; status: BuyerStatus }> =
       {!prompt.active && (
         <div className="p-3 rounded-lg bg-slate-500/10 border border-slate-500/20 flex items-center gap-2">
           <X className="h-4 w-4 text-slate-400" />
-          <p className="text-xs text-slate-400 font-semibold">This prompt is currently unavailable</p>
+          <p className="text-xs text-slate-400 font-semibold">
+            This prompt is{" "}
+            <ContractStateTooltip
+              state="expired"
+              detail="The creator has taken this listing offline."
+            />
+          </p>
         </div>
       )}
     </div>
@@ -342,6 +352,8 @@ export const PromptModal: React.FC<PromptModalProps> = ({
   // rather than listed as an effect dependency.
   const walletAddressRef = useRef<string | undefined>(wallet?.address);
   walletAddressRef.current = wallet?.address;
+  const walletStatusRef = useRef(wallet?.status);
+  walletStatusRef.current = wallet?.status;
 
   useEffect(() => {
     if (isOpen && itemId) {
@@ -355,8 +367,13 @@ export const PromptModal: React.FC<PromptModalProps> = ({
     error: unlockError,
   } = useAsyncTransaction(
     async (hash: string) => {
-      if (!wallet?.signMessage || !wallet.address) throw new Error("Wallet not connected");
-      return await unlockPrompt(itemId, hash, wallet.signMessage, wallet.address);
+      const unlockAddress = wallet?.address;
+      if (!wallet?.signMessage || !unlockAddress) throw new Error("Wallet not connected");
+      return await unlockPrompt(itemId, hash, wallet.signMessage, unlockAddress, {
+        isWalletConnected: () =>
+          walletStatusRef.current === "connected" &&
+          walletAddressRef.current === unlockAddress,
+      });
     },
     {
       onOptimistic: () => setStatus("UNLOCKING"),
@@ -365,11 +382,13 @@ export const PromptModal: React.FC<PromptModalProps> = ({
         setStatus("SUCCESS");
         trackEventWithWallet("prompt_unlocked", wallet?.address, { promptId: itemId });
       },
-      onError: () => {
+      onError: (error) => {
         setStatus("PURCHASED_LOCKED");
         trackEventWithWallet("prompt_unlock_failed", wallet?.address, {
           promptId: itemId,
-          reasonCode: "unlock_error",
+          reasonCode: isWalletDisconnectUnlockError(error)
+            ? "wallet_disconnected"
+            : "unlock_error",
         });
       },
     },
@@ -512,6 +531,14 @@ export const PromptModal: React.FC<PromptModalProps> = ({
           category: promptData.category,
         }
       : null;
+  const unlockDisconnectError = isWalletDisconnectUnlockError(unlockError);
+  const walletCanUnlock = wallet?.status === "connected" && Boolean(wallet?.address);
+  const unlockNeedsReconnect = unlockDisconnectError && !walletCanUnlock;
+  const unlockErrorMessage = unlockNeedsReconnect
+    ? `Wallet disconnected while unlocking prompt #${itemId}. Reconnect your wallet to finish decrypting.`
+    : unlockError && !unlockDisconnectError
+      ? translateError(unlockError.message)
+      : "";
 
   return (
     <>
@@ -623,10 +650,18 @@ export const PromptModal: React.FC<PromptModalProps> = ({
                       }
                       className="flex-1 group h-14 bg-white text-slate-950 hover:bg-emerald-400 font-black rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {!networkState.canTrustConfirmation
-                        ? "Transactions Unavailable"
-                        : "Confirm & Purchase"}{" "}
-                      <Wallet className="w-4 h-4" />
+                      {isPurchasing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : !networkState.canTrustConfirmation ? (
+                        "Transactions Unavailable"
+                      ) : (
+                        <>
+                          Confirm & Purchase <Wallet className="w-4 h-4" />
+                        </>
+                      )}
                     </button>
                     <button
                       onClick={() => addToCart(itemId)}
@@ -719,16 +754,31 @@ export const PromptModal: React.FC<PromptModalProps> = ({
                     }
                   />
 
-                  {unlockError && (
+                  {unlockErrorMessage && (
                     <StatusBanner
                       status="error"
-                      message={translateError(unlockError.message)}
+                      message={unlockErrorMessage}
                     />
+                  )}
+
+                  {unlockNeedsReconnect && (
+                    <button
+                      type="button"
+                      onClick={() => wallet?.reconnect().catch(() => {})}
+                      disabled={
+                        !wallet?.reconnect ||
+                        wallet?.status === "connecting" ||
+                        wallet?.status === "reconnecting"
+                      }
+                      className="w-full h-12 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 text-sm font-bold text-cyan-100 transition-colors hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {wallet?.status === "reconnecting" ? "Reconnecting..." : "Reconnect wallet"}
+                    </button>
                   )}
 
                   <button
                     onClick={() => runUnlock(txHash || "existing").catch(() => {})}
-                    disabled={isUnlocking}
+                    disabled={isUnlocking || unlockNeedsReconnect}
                     className="w-full h-14 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-2xl transition-all shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]"
                   >
                     {isUnlocking ? "Unlocking..." : "Decrypt Content"}

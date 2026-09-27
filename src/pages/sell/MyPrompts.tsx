@@ -21,6 +21,7 @@ import { getPromptOrder, setPromptOrder } from "@/lib/prompts/promptOrderClient"
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { useNetworkState } from "@/hooks/useNetworkState";
 import { type PromptRecord } from "@/lib/stellar/promptHashClient";
+import { SkeletonCard } from "@/components/Skeleton";
 import { useMultiSelect } from "@/hooks/useMultiSelect";
 import { runBatchOperation } from "@/lib/marketplace/batchOperations";
 
@@ -210,6 +211,10 @@ const MyPrompts = ({ onCreateNew: _onCreateNew }: MyPromptsProps) => {
       queryClient.invalidateQueries({ queryKey: ["purchased-prompts"] }),
       queryClient.invalidateQueries({ queryKey: ["marketplace-prompts"] }),
       queryClient.invalidateQueries({ queryKey: ["prompt-access"] }),
+      // #507: detail views and the cart cache read price from separate keys and
+      // must be refreshed too, otherwise the old price lingers after an update.
+      queryClient.invalidateQueries({ queryKey: ["prompt-detail"] }),
+      queryClient.invalidateQueries({ queryKey: ["marketplace-prompts-cache"] }),
     ]);
   };
 
@@ -520,8 +525,10 @@ const MyPrompts = ({ onCreateNew: _onCreateNew }: MyPromptsProps) => {
         ) : null}
 
         {createdQuery.isLoading ? (
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-sm text-slate-300">
-            Loading created prompts...
+          <div className="grid gap-6 xl:grid-cols-2" role="status" aria-label="Loading created prompts">
+            {[...Array(2)].map((_, i) => (
+              <SkeletonCard key={i} lines={3} className="h-full" />
+            ))}
           </div>
         ) : orderedCreatedPrompts.length === 0 ? (
           emptyState
@@ -535,7 +542,7 @@ const MyPrompts = ({ onCreateNew: _onCreateNew }: MyPromptsProps) => {
                 onDragOver={handlePromptDragOver}
                 onDrop={handlePromptDrop(prompt.id.toString())}
                 onDragEnd={() => setDraggedId(null)}
-                className={`border-white/10 bg-slate-950/70 text-white transition-opacity ${
+                className={`relative border-white/10 bg-slate-950/70 text-white transition-opacity ${
                   draggedId === prompt.id.toString() ? "opacity-50" : ""
                 }`}
               >
@@ -546,8 +553,6 @@ const MyPrompts = ({ onCreateNew: _onCreateNew }: MyPromptsProps) => {
                   />
                   <span className="text-xs uppercase tracking-[0.2em]">Drag to reorder</span>
                 </div>
-                className="relative border-white/10 bg-slate-950/70 text-white"
-              >
                 <label className="absolute left-3 top-3 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-white/20 bg-slate-950/70 backdrop-blur">
                   <input
                     type="checkbox"
@@ -646,8 +651,10 @@ const MyPrompts = ({ onCreateNew: _onCreateNew }: MyPromptsProps) => {
         </div>
 
         {purchasedQuery.isLoading ? (
-          <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-sm text-slate-300">
-            Loading purchased prompts...
+          <div className="grid gap-6 xl:grid-cols-2" role="status" aria-label="Loading purchased prompts">
+            {[...Array(2)].map((_, i) => (
+              <SkeletonCard key={i} withMedia={false} lines={3} className="h-full" />
+            ))}
           </div>
         ) : purchasedPrompts.length === 0 ? (
           emptyState

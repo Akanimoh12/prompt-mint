@@ -17,6 +17,7 @@ import { useRecentlyViewed, type UseRecentlyViewedReturn } from '@/hooks/useRece
 import { PromptHashClient } from '@/lib/stellar/promptHashClient';
 import { browserStellarConfig } from '@/lib/stellar/browserConfig';
 import { formatPriceLabel } from '@/lib/stellar/format';
+import { Skeleton, SkeletonText } from '@/components/Skeleton';
 
 const promptImageFallback = '/images/codeguru.png';
 
@@ -43,6 +44,27 @@ function RecentlyViewedCard({
 
   const viewedDate = new Date(entry.viewedAt);
   const timeAgo = getTimeAgo(viewedDate);
+
+  // Only show the card skeleton when we have neither live data nor a
+  // cached snapshot from the recently-viewed entry itself.
+  if (isLoading && !prompt && !entry.title) {
+    return (
+      <div
+        className="overflow-hidden rounded-xl border border-white/10 bg-[#0f1419] p-4"
+        role="status"
+        aria-label="Loading recently viewed listing"
+      >
+        <div className="flex gap-4">
+          <Skeleton className="h-20 w-20 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <SkeletonText className="w-2/3" />
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="h-8 w-28" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <article className="overflow-hidden rounded-xl border border-white/10 bg-[#0f1419] transition-colors hover:border-white/[0.18]">
@@ -92,7 +114,7 @@ function RecentlyViewedCard({
           <div className="mt-2 flex items-center gap-3">
             {displayPrice && (
               <span className="text-sm font-semibold text-white">
-                {formatPriceLabel(displayPrice)} XLM
+                {formatPriceLabel(BigInt(displayPrice))} XLM
               </span>
             )}
             <span className="text-xs text-slate-500">{timeAgo}</span>
@@ -280,15 +302,6 @@ function EmptyState() {
   );
 }
 
-function LoadingState() {
-  return (
-    <div className="flex min-h-40 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] p-8 text-sm text-slate-300">
-      <Loader2 className="mr-2 h-4 w-4 animate-spin text-cyan-200" />
-      Loading recently viewed...
-    </div>
-  );
-}
-
 function getTimeAgo(date: Date): string {
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -312,7 +325,6 @@ export function RecentlyViewed({ walletAddress }: RecentlyViewedProps) {
     entries,
     config,
     isStorageOk,
-    addEntry,
     removeEntry,
     clearAll,
     enable,

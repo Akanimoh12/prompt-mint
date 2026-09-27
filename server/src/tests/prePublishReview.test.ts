@@ -1,3 +1,5 @@
+/* global describe, it, expect, beforeEach */
+
 describe("Pre-Publish Review Workflow", () => {
   describe("Submit for Review", () => {
     it("should transition draft to ready status", async () => {
@@ -37,6 +39,8 @@ describe("Pre-Publish Review Workflow", () => {
       const content = "";
       const isValid = Boolean(content) && content.length >= 10;
       expect(isValid).toBe(false);
+      const isValid = content && content.length >= 10;
+      expect(isValid).toBeFalsy();
     });
 
     it("should validate image URL presence", () => {

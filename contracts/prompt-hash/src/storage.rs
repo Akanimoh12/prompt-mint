@@ -1,12 +1,17 @@
 use super::types::{
-    Bundle, ClassificationOverride, DataKey, Discount, Error, Prompt, PromptEncryptedPayload,
-    Purchase, ReferralCode, Settlement, Stake, Subscription, SubscriptionConfig,
+    Bundle, BundlePurchase, ClassificationOverride, DataKey, Discount, Error, PriceHistoryEntry,
+    Prompt, PromptEncryptedPayload, Purchase, ReferralCode, Settlement, Stake, Subscription,
+    SubscriptionConfig,
 };
 use soroban_sdk::{token, Address, BytesN, Env, Vec};
 
 pub const DAY_IN_LEDGERS: u32 = 17280;
 pub const PERSISTENT_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+
+/// #192 – Maximum number of price-history entries retained per prompt so the
+/// compact history log in contract storage stays bounded in size.
+pub const MAX_PRICE_HISTORY_LEN: u32 = 20;
 
 pub struct Storage;
 
@@ -19,6 +24,81 @@ fn ensure(condition: bool, error: Error) -> Result<(), Error> {
 }
 
 impl Storage {
+    pub fn set_config_admin_signers(env: &Env, signers: &Vec<Address>) {
+        let key = DataKey::AdminSigners;
+        env.storage().persistent().set(&key, signers);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn is_config_admin_signer(env: &Env, signer: &Address) -> bool {
+        Self::is_signer(env, &DataKey::AdminSigners, signer)
+    }
+
+    pub fn set_upgrade_admin_signers(env: &Env, signers: &Vec<Address>) {
+        let key = DataKey::UpgradeAdminSigners;
+        env.storage().persistent().set(&key, signers);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn is_upgrade_admin_signer(env: &Env, signer: &Address) -> bool {
+        Self::is_signer(env, &DataKey::UpgradeAdminSigners, signer)
+    }
+
+    fn is_signer(env: &Env, key: &DataKey, signer: &Address) -> bool {
+        let signers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(key)
+            .unwrap_or_else(|| Vec::new(env));
+        if env.storage().persistent().has(key) {
+            Self::extend_key_ttl(env, key);
+        }
+        for index in 0..signers.len() {
+            if signers.get(index).unwrap() == signer.clone() {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn get_min_price(env: &Env) -> Option<i128> {
+        let key = DataKey::MinPrice;
+        let value = env.storage().persistent().get(&key);
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        value
+    }
+
+    pub fn set_min_price(env: &Env, price: Option<i128>) {
+        let key = DataKey::MinPrice;
+        if let Some(p) = price {
+            env.storage().persistent().set(&key, &p);
+            Self::extend_key_ttl(env, &key);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+    }
+
+    pub fn get_max_price(env: &Env) -> Option<i128> {
+        let key = DataKey::MaxPrice;
+        let value = env.storage().persistent().get(&key);
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        value
+    }
+
+    pub fn set_max_price(env: &Env, price: Option<i128>) {
+        let key = DataKey::MaxPrice;
+        if let Some(p) = price {
+            env.storage().persistent().set(&key, &p);
+            Self::extend_key_ttl(env, &key);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+    }
+
     pub fn extend_key_ttl(env: &Env, key: &DataKey) {
         if env.storage().persistent().has(key) {
             env.storage().persistent().extend_ttl(
@@ -63,6 +143,22 @@ impl Storage {
         Self::extend_key_ttl(env, &key);
     }
 
+    pub fn has_prompt_expiry_warning(env: &Env, prompt_id: u128) -> bool {
+        let key = DataKey::PromptExpiryWarning(prompt_id);
+        env.storage().persistent().has(&key)
+    }
+
+    pub fn set_prompt_expiry_warning(env: &Env, prompt_id: u128) {
+        let key = DataKey::PromptExpiryWarning(prompt_id);
+        env.storage().persistent().set(&key, &true);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn clear_prompt_expiry_warning(env: &Env, prompt_id: u128) {
+        let key = DataKey::PromptExpiryWarning(prompt_id);
+        env.storage().persistent().remove(&key);
+    }
+
     pub fn get_prompt_counter(env: &Env) -> u128 {
         let key = DataKey::PromptCounter;
         let count = env.storage().persistent().get(&key).unwrap_or(0);
@@ -72,14 +168,37 @@ impl Storage {
         count
     }
 
-    pub fn get_all_prompts(env: &Env) -> Vec<Prompt> {
+    pub fn get_all_prompts(env: &Env, start_index: u128, limit: u32) -> (Vec<Prompt>, u128) {
+        let prompt_count = Self::get_prompt_counter(env);
+        let now = env.ledger().timestamp();
+        let mut prompts = Vec::new(env);
+        
+        let end_index = if start_index.saturating_add(limit as u128) > prompt_count {
+            prompt_count
+        } else {
+            start_index + (limit as u128)
+        };
+
+        for prompt_id in start_index..end_index {
+            if let Some(prompt) = Self::get_prompt(env, prompt_id) {
+                // Skip expired listings (expires_at == 0 means never expires)
+                if prompt.expires_at == 0 || prompt.expires_at >= now {
+                    prompts.push_back(prompt);
+                }
+            }
+        }
+        (prompts, prompt_count)
+    }
+
+    pub fn get_prompts_by_category(env: &Env, category: &String) -> Vec<Prompt> {
         let prompt_count = Self::get_prompt_counter(env);
         let now = env.ledger().timestamp();
         let mut prompts = Vec::new(env);
         for prompt_id in 0..prompt_count {
             if let Some(prompt) = Self::get_prompt(env, prompt_id) {
-                // Skip expired listings (expires_at == 0 means never expires)
-                if prompt.expires_at == 0 || prompt.expires_at >= now {
+                if (prompt.expires_at == 0 || prompt.expires_at >= now)
+                    && prompt.category == category.clone()
+                {
                     prompts.push_back(prompt);
                 }
             }
@@ -166,7 +285,10 @@ impl Storage {
             if ids.get(index).unwrap() == prompt_id {
                 ids.remove(index);
             } else {
-                index += 1;
+                index = match index.checked_add(1) {
+                    Some(next) => next,
+                    None => break,
+                };
             }
         }
         env.storage().persistent().set(&key, &ids);
@@ -384,15 +506,23 @@ impl Storage {
 
     pub fn set_reentrancy_guard(env: &Env) -> Result<(), Error> {
         let key = DataKey::Reentrancy;
-        let already_set = env
+        Self::require_no_reentrancy(env)?;
+        env.storage().persistent().set(&key, &true);
+        Self::extend_key_ttl(env, &key);
+        Ok(())
+    }
+
+    pub fn require_no_reentrancy(env: &Env) -> Result<(), Error> {
+        let key = DataKey::Reentrancy;
+        let entered = env
             .storage()
             .persistent()
             .get::<_, bool>(&key)
             .unwrap_or(false);
-        ensure(!already_set, Error::ReentrancyGuard)?;
-        env.storage().persistent().set(&key, &true);
-        Self::extend_key_ttl(env, &key);
-        Ok(())
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        ensure(!entered, Error::ReentrancyGuard)
     }
 
     pub fn clear_reentrancy_guard(env: &Env) {
@@ -444,6 +574,24 @@ impl Storage {
         let key = DataKey::ReferralParent(buyer.clone());
         env.storage().persistent().set(&key, referrer);
         Self::extend_key_ttl(env, &key);
+    }
+
+    /// #32 – records that contract setup (`__constructor`) has completed, so
+    /// callers can detect and reject an attempt to run it again.
+    pub fn set_initialized(env: &Env) {
+        let key = DataKey::Initialized;
+        env.storage().persistent().set(&key, &true);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    /// #32 – true once `__constructor` has run for this contract instance.
+    pub fn is_initialized(env: &Env) -> bool {
+        let key = DataKey::Initialized;
+        let initialized = env.storage().persistent().get(&key).unwrap_or(false);
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        initialized
     }
 
     pub fn set_pause_status(env: &Env, is_paused: bool) {
@@ -605,6 +753,48 @@ impl Storage {
         env.storage().persistent().get(&key).unwrap_or(0)
     }
 
+    // ─── #192: Per-prompt Price History ────────────────────────────────────
+
+    /// Append an entry to a prompt's compact price-history log. The log is
+    /// capped at `MAX_PRICE_HISTORY_LEN` entries, dropping the oldest entries
+    /// once the cap is exceeded.
+    pub fn add_price_history_entry(
+        env: &Env,
+        prompt_id: u128,
+        entry: &PriceHistoryEntry,
+    ) {
+        let key = DataKey::PriceHistory(prompt_id);
+        let mut history: Vec<PriceHistoryEntry> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        history.push_back(entry.clone());
+        // Keep the log compact: drop the oldest entries once over the cap.
+        if history.len() > MAX_PRICE_HISTORY_LEN {
+            let to_remove = history.len() - MAX_PRICE_HISTORY_LEN;
+            for _ in 0..to_remove {
+                history.remove(0);
+            }
+        }
+        env.storage().persistent().set(&key, &history);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    /// Return the recorded price history for a prompt, oldest first.
+    pub fn get_price_history(env: &Env, prompt_id: u128) -> Vec<PriceHistoryEntry> {
+        let key = DataKey::PriceHistory(prompt_id);
+        let history: Vec<PriceHistoryEntry> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        history
+    }
+
     // ─── #275: Creator Reputation Staking ─────────────────────────────────
 
     pub fn get_stake(env: &Env, prompt_id: u128) -> Option<Stake> {
@@ -641,6 +831,28 @@ impl Storage {
 
     pub fn clear_pending_upgrade(env: &Env) {
         let key = DataKey::PendingUpgrade;
+        env.storage().persistent().remove(&key);
+    }
+
+    // ─── #195: Emergency Pause Timelock ──────────────────────────────────
+
+    pub fn set_pending_unpause_at(env: &Env, timestamp: u64) {
+        let key = DataKey::PendingUnpauseAt;
+        env.storage().persistent().set(&key, &timestamp);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn get_pending_unpause_at(env: &Env) -> Option<u64> {
+        let key = DataKey::PendingUnpauseAt;
+        let ts: Option<u64> = env.storage().persistent().get(&key);
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        ts
+    }
+
+    pub fn clear_pending_unpause_at(env: &Env) {
+        let key = DataKey::PendingUnpauseAt;
         env.storage().persistent().remove(&key);
     }
 
@@ -720,5 +932,162 @@ impl Storage {
     pub fn clear_discount(env: &Env, prompt_id: u128) {
         let key = DataKey::Discount(prompt_id);
         env.storage().persistent().remove(&key);
+    }
+}
+
+// ─── Bundle storage ──────────────────────────────────────────────────────────
+
+impl Storage {
+    // ── Counter ──────────────────────────────────────────────────────────────
+
+    pub fn get_bundle_counter(env: &Env) -> u128 {
+        let key = DataKey::BundleCounter;
+        let count: u128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        count
+    }
+
+    fn increment_bundle_counter(env: &Env, bundle_id: u128) -> Result<(), Error> {
+        let key = DataKey::BundleCounter;
+        let next = bundle_id.checked_add(1).ok_or(Error::ArithmeticOverflow)?;
+        env.storage().persistent().set(&key, &next);
+        Self::extend_key_ttl(env, &key);
+        Ok(())
+    }
+
+    // ── CRUD ─────────────────────────────────────────────────────────────────
+
+    pub fn save_bundle(env: &Env, bundle: &Bundle) -> Result<(), Error> {
+        let key = DataKey::Bundle(bundle.id);
+        env.storage().persistent().set(&key, bundle);
+        Self::extend_key_ttl(env, &key);
+        Self::increment_bundle_counter(env, bundle.id)
+    }
+
+    pub fn get_bundle(env: &Env, bundle_id: u128) -> Option<Bundle> {
+        let key = DataKey::Bundle(bundle_id);
+        if let Some(b) = env.storage().persistent().get::<_, Bundle>(&key) {
+            Self::extend_key_ttl(env, &key);
+            Some(b)
+        } else {
+            None
+        }
+    }
+
+    pub fn require_bundle(env: &Env, bundle_id: u128) -> Result<Bundle, Error> {
+        Self::get_bundle(env, bundle_id).ok_or(Error::BundleNotFound)
+    }
+
+    pub fn update_bundle(env: &Env, bundle: &Bundle) {
+        let key = DataKey::Bundle(bundle.id);
+        env.storage().persistent().set(&key, bundle);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn get_all_bundles(env: &Env) -> Vec<Bundle> {
+        let count = Self::get_bundle_counter(env);
+        let mut out = Vec::new(env);
+        for id in 0..count {
+            if let Some(b) = Self::get_bundle(env, id) {
+                out.push_back(b);
+            }
+        }
+        out
+    }
+
+    // ── Creator / buyer index ─────────────────────────────────────────────────
+
+    pub fn add_bundle_to_creator(env: &Env, creator: &Address, bundle_id: u128) {
+        let key = DataKey::CreatorBundles(creator.clone());
+        let mut ids: Vec<u128> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        ids.push_back(bundle_id);
+        env.storage().persistent().set(&key, &ids);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn get_bundles_by_creator(env: &Env, creator: &Address) -> Vec<Bundle> {
+        let key = DataKey::CreatorBundles(creator.clone());
+        let ids: Vec<u128> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        Self::bundles_from_ids(env, ids)
+    }
+
+    pub fn add_bundle_to_buyer(env: &Env, buyer: &Address, bundle_id: u128) {
+        let key = DataKey::BuyerBundles(buyer.clone());
+        let mut ids: Vec<u128> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        // idempotent
+        for i in 0..ids.len() {
+            if ids.get(i).unwrap() == bundle_id {
+                Self::extend_key_ttl(env, &key);
+                return;
+            }
+        }
+        ids.push_back(bundle_id);
+        env.storage().persistent().set(&key, &ids);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn get_bundles_by_buyer(env: &Env, buyer: &Address) -> Vec<Bundle> {
+        let key = DataKey::BuyerBundles(buyer.clone());
+        let ids: Vec<u128> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        Self::bundles_from_ids(env, ids)
+    }
+
+    fn bundles_from_ids(env: &Env, ids: Vec<u128>) -> Vec<Bundle> {
+        let mut out = Vec::new(env);
+        for i in 0..ids.len() {
+            if let Some(b) = Self::get_bundle(env, ids.get(i).unwrap()) {
+                out.push_back(b);
+            }
+        }
+        out
+    }
+
+    // ── Bundle purchase record ────────────────────────────────────────────────
+
+    pub fn save_bundle_purchase(env: &Env, purchase: &BundlePurchase) {
+        let key = DataKey::BundlePurchase(purchase.bundle_id, purchase.owner.clone());
+        env.storage().persistent().set(&key, purchase);
+        Self::extend_key_ttl(env, &key);
+    }
+
+    pub fn get_bundle_purchase(
+        env: &Env,
+        bundle_id: u128,
+        buyer: &Address,
+    ) -> Option<BundlePurchase> {
+        let key = DataKey::BundlePurchase(bundle_id, buyer.clone());
+        let p = env.storage().persistent().get::<_, BundlePurchase>(&key);
+        if env.storage().persistent().has(&key) {
+            Self::extend_key_ttl(env, &key);
+        }
+        p
+    }
+
+    pub fn has_bundle_purchase(env: &Env, bundle_id: u128, buyer: &Address) -> bool {
+        Self::get_bundle_purchase(env, bundle_id, buyer).is_some()
     }
 }

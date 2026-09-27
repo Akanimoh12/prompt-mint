@@ -1,3 +1,5 @@
+/* global describe, it, expect */
+
 describe("Indexer Reconciliation", () => {
   describe("Price Reconciliation", () => {
     it("should detect price mismatch", () => {

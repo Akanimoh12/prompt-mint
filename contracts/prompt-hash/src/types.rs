@@ -46,7 +46,6 @@ pub enum Error {
     MaxSupplyReached = 19,
     // #50 – revenue splits
     InvalidSplits = 20,
-    // #49 – time-bound listing expiry
     ListingExpired = 21,
     LicenseNotFound = 22,
     InvalidLicenseTransfer = 23,
@@ -86,6 +85,35 @@ pub enum Error {
     StakeLocked = 48,
     InvalidStakeAmount = 49,
     NotStakeOwner = 50,
+    // #32 – guard against the constructor/setup routine being invoked more
+    // than once against an already-initialized contract instance.
+    //
+    // NB: this enum already has pre-existing duplicate variant names/values
+    // (see the note at the top of this enum) unrelated to issue #32, so it
+    // does not currently compile as-is. `51` is chosen so this new variant
+    // stays unique regardless of how that separate cleanup lands.
+    AlreadyInitialized = 51,
+    // #194 – contract-upgrade safety checks
+    /// The proposed implementation is unusable (zero hash or it equals the
+    /// currently deployed bytecode), so the upgrade cannot proceed.
+    InvalidImplementation = 52,
+    /// On-chain storage failed integrity validation before an upgrade; the
+    /// upgrade is aborted to avoid losing state.
+    UpgradeStorageIntegrity = 53,
+    /// The upgrade would break existing license holders; aborted before the
+    /// new implementation is installed.
+    UpgradeLicenseIntegrity = 54,
+    // #195 – emergency pause with owner override
+    /// Contract is already paused when attempting emergency pause.
+    EmergencyAlreadyActive = 55,
+    /// No unpause has been proposed.
+    UnpauseNotProposed = 56,
+    /// The timelock for the pending unpause has not elapsed.
+    UnpauseCooldownNotElapsed = 57,
+    /// The buyer's token balance is insufficient to cover the payment.
+    InsufficientBalance = 55,
+    /// set_fee_wallet was already called once; the fee wallet is immutable.
+    FeeWalletAlreadySet = 56,
 }
 
 #[contracttype]
@@ -99,76 +127,60 @@ pub enum DataKey {
     CreatorPrompts(Address),
     BuyerPrompts(Address),
     Purchase(u128, Address),
-    // #272 – prompt bundles and their id counter
-    Bundle(u128),
-    BundleCounter,
     Reentrancy,
     ReferralPercentage,
     IsPaused,
     VoucherKey(u128, BytesN<32>),
+    // Bundle storage keys
+    Bundle(u128),
+    BundleCounter,
+    CreatorBundles(Address),
+    BuyerBundles(Address),
+    BundlePurchase(u128, Address),
     ReferralCode(BytesN<32>),
     ReferralParent(Address),
     SubscriptionConfig(Address),
     Subscription(Address, Address),
     SubscriptionEligible(u128),
-    // #131 – content classification
-    ClassificationOverride(u128),
-    ModeratorAddress,
-    // Promotional pricing
-    ActivePromotion(u128),
-    PromotionHistory(u128),
-    // Encryption rotation – versioned payloads & version counter per prompt
+    AdminSigners,
+    UpgradeAdminSigners,
+    Initialized,
+    SchemaVersion,
     PromptEncryptedPayload(u128, u32),
     PromptEncryptionVersion(u128),
-    // Contract state schema version, bumped by `migrate` after an `upgrade`
-    // that changes stored data shapes.
-    SchemaVersion,
-    // #273 – time-based discount schedule per prompt
-    Discount(u128),
-    // #275 – creator reputation staking, keyed by prompt id
+    ClassificationOverride(u128),
+    ModeratorAddress,
+    ActivePromotion(u128),
+    PromotionHistory(u128),
     CreatorStake(u128),
-    // #42 – two-step upgrade authorization
     PendingUpgrade,
     UpgradeProposer,
     UpgradeProposedAt,
+    Discount(u128),
+    // #192 – per-prompt price history log.
+    PromptExpiryWarning(u128),
+    PriceHistory(u128),
+    // #195 – emergency pause timelock
+    PendingUnpauseAt,
 }
 
-/// #273 – Time-based discount schedule for a prompt.
-/// While the current ledger sequence is within `[start_ledger, end_ledger]`
-/// (inclusive), `discounted_price` transparently overrides the base price on
-/// the purchase path. The window is expressed in ledger sequence numbers so it
-/// reverts automatically once the window closes, with no further action needed.
+/// #192 – A single recorded price change for a prompt.
+///
+/// Appended to the prompt's price-history log whenever the creator changes the
+/// base listing price (and once with the prompt's initial price at creation)
+/// so buyers can see how the price has trended over time.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Discount {
-    pub prompt_id: u128,
-    pub creator: Address,
-    pub discounted_price: i128,
-    pub start_ledger: u32,
-    pub end_ledger: u32,
-}
-
-/// A moderator-overridden classification that takes precedence
-/// over the creator's attested classification for display purposes.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClassificationOverride {
-    pub classifier: Address,
-    pub classification: String,
-    pub safety_flags: Vec<String>,
-    pub reason: String,
-    pub reviewed_at: u64,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Settlement {
-    pub buyer_amount: i128,
-    pub creator_amount: i128,
-    pub platform_amount: i128,
-    pub referrer: Option<Address>,
-    pub referrer_amount: i128,
-    pub split_amount: i128,
+pub struct PriceHistoryEntry {
+    /// Price in stroops immediately before the change.
+    pub previous_price: i128,
+    /// Price in stroops after the change (or the initial listing price).
+    pub new_price: i128,
+    /// Ledger timestamp when the change was recorded.
+    pub changed_at: u64,
+    /// Monotonic per-prompt sequence number, starting at 1 for the initial
+    /// listing price. Used to keep history entries ordered and de-duplicated.
+    pub seq: u64,
 }
 
 #[contracttype]
@@ -213,19 +225,6 @@ pub struct Promotion {
     /// Promotional price in stroops.
     pub price: i128,
     /// Token contract address for the promotional price.
-    pub asset: Address,
-}
-
-/// #272 – A bundle of prompts sold together at a single discounted total price.
-/// A buyer who purchases the bundle receives a license/entitlement for every
-/// prompt id it contains.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Bundle {
-    pub id: u128,
-    pub creator: Address,
-    pub prompt_ids: Vec<u128>,
-    pub price: i128,
     pub asset: Address,
 }
 
@@ -373,10 +372,38 @@ pub struct Stake {
     pub staked_at: u64,
 }
 
+/// Moderator-attested classification that overrides the creator's attestation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClassificationOverride {
+    pub classifier: Address,
+    pub classification: String,
+    pub safety_flags: Vec<String>,
+    pub reason: String,
+    pub reviewed_at: u64,
+}
+
+/// Time-windowed listing discount. While the ledger sequence is inside
+/// `[start_ledger, end_ledger]`, purchases use `discounted_price`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Discount {
+    pub prompt_id: u128,
+    pub creator: Address,
+    pub discounted_price: i128,
+    pub start_ledger: u32,
+    pub end_ledger: u32,
+}
+
 pub trait PromptHashTrait {
     fn __constructor(
         env: Env,
-        admin: Address,
+        config_admin: Address,
+        config_admin_two: Address,
+        config_admin_three: Address,
+        upgrade_admin: Address,
+        upgrade_admin_two: Address,
+        upgrade_admin_three: Address,
         fee_wallet: Address,
         xlm_sac: Address,
     ) -> Result<(), Error>;
@@ -417,6 +444,9 @@ pub trait PromptHashTrait {
         price_stroops: i128,
     ) -> Result<(), Error>;
 
+    // #192 – Return the recorded price history for a prompt, oldest first.
+    fn get_price_history(env: Env, prompt_id: u128) -> Result<Vec<PriceHistoryEntry>, Error>;
+
     fn buy_prompt(
         env: Env,
         buyer: Address,
@@ -442,6 +472,19 @@ pub trait PromptHashTrait {
         new_expires_at: u64,
     ) -> Result<(), Error>;
 
+    /// Extend a prompt's expiry by `extension_secs` from its current expiry.
+    /// A never-expiring prompt (`expires_at == 0`) cannot be extended.
+    fn extend_prompt_lifetime(
+        env: Env,
+        creator: Address,
+        prompt_id: u128,
+        extension_secs: u64,
+    ) -> Result<u64, Error>;
+
+    /// Emit the expiry warning event when a prompt is within its warning
+    /// window. Anyone may call this for off-chain indexing services.
+    fn check_prompt_expiry(env: Env, prompt_id: u128) -> Result<bool, Error>;
+
     /// Purchase multiple prompts atomically in a single transaction.
     /// `prompt_ids` and `payment_amounts` must have equal length.
     /// An optional `referrer` applies to every prompt in the batch.
@@ -454,28 +497,6 @@ pub trait PromptHashTrait {
         referral_code: Option<Bytes>,
     ) -> Result<(), Error>;
 
-    // ─── #272: Prompt bundling ────────────────────────────────────────────────
-    /// Creator-gated. Bundles multiple prompts (all owned by `creator`) at a
-    /// single `price`. Returns the new bundle id.
-    fn create_bundle(
-        env: Env,
-        creator: Address,
-        prompt_ids: Vec<u128>,
-        price: i128,
-        asset: Address,
-    ) -> Result<u128, Error>;
-
-    /// Purchases a bundle: transfers `price` from the buyer (split to creator and
-    /// platform fee) and grants the buyer a license for every prompt in it.
-    fn purchase_bundle(
-        env: Env,
-        buyer: Address,
-        bundle_id: u128,
-        payment_amount: i128,
-    ) -> Result<(), Error>;
-
-    fn get_bundle(env: Env, bundle_id: u128) -> Result<Bundle, Error>;
-
     fn transfer_license(
         env: Env,
         seller: Address,
@@ -485,10 +506,17 @@ pub trait PromptHashTrait {
     ) -> Result<(), Error>;
 
     fn has_access(env: Env, user: Address, prompt_id: u128) -> Result<bool, Error>;
+    fn revoke_access(
+        env: Env,
+        caller: Address,
+        prompt_id: u128,
+        buyer: Address,
+    ) -> Result<(), Error>;
     fn get_prompt(env: Env, prompt_id: u128) -> Result<Prompt, Error>;
-    fn get_all_prompts(env: Env) -> Result<Vec<Prompt>, Error>;
+    fn get_all_prompts(env: Env, start_index: u128, limit: u32) -> Result<(Vec<Prompt>, u128), Error>;
     fn get_prompts_by_creator(env: Env, creator: Address) -> Result<Vec<Prompt>, Error>;
     fn get_prompts_by_buyer(env: Env, buyer: Address) -> Result<Vec<Prompt>, Error>;
+    fn get_prompts_by_category(env: Env, category: String) -> Result<Vec<Prompt>, Error>;
     fn get_purchase_details(env: Env, prompt_id: u128, buyer: Address) -> Result<Purchase, Error>;
     fn configure_subscription_pass(
         env: Env,
@@ -523,23 +551,35 @@ pub trait PromptHashTrait {
     ) -> Result<Subscription, Error>;
     fn get_subscription_config(env: Env, creator: Address) -> Result<SubscriptionConfig, Error>;
     fn is_subscription_eligible(env: Env, prompt_id: u128) -> Result<bool, Error>;
-    fn set_fee_percentage(env: Env, new_fee_percentage: u32) -> Result<(), Error>;
-    fn set_fee_wallet(env: Env, new_fee_wallet: Address) -> Result<(), Error>;
+    fn set_fee_percentage(
+        env: Env,
+        new_fee_percentage: u32,
+        approver_a: Address,
+        approver_b: Address,
+    ) -> Result<(), Error>;
+    fn set_fee_wallet(
+        env: Env,
+        new_fee_wallet: Address,
+        approver_a: Address,
+        approver_b: Address,
+    ) -> Result<(), Error>;
     fn get_fee_percentage(env: Env) -> u32;
     fn get_fee_wallet(env: Env) -> Option<Address>;
     fn set_referral_percentage(env: Env, new_referral_percentage: u32) -> Result<(), Error>;
     fn get_referral_percentage(env: Env) -> u32;
+    fn set_price_bounds(env: Env, approver_a: Address, approver_b: Address, min_price: Option<i128>, max_price: Option<i128>) -> Result<(), Error>;
+    fn get_price_bounds(env: Env) -> (Option<i128>, Option<i128>);
     fn register_referral_code(
         env: Env,
         referrer: Address,
         code_hash: BytesN<32>,
     ) -> Result<(), Error>;
-    fn revoke_referral_code(
+    fn set_pause_status(
         env: Env,
-        referrer: Address,
-        code_hash: BytesN<32>,
+        paused: bool,
+        approver_a: Address,
+        approver_b: Address,
     ) -> Result<(), Error>;
-    fn set_pause_status(env: Env, paused: bool) -> Result<(), Error>;
     fn is_paused(env: Env) -> bool;
     fn add_voucher(
         env: Env,
@@ -555,12 +595,95 @@ pub trait PromptHashTrait {
         hashed_code: BytesN<32>,
     ) -> Result<(), Error>;
     fn get_xlm_sac(env: Env) -> Option<Address>;
-    fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error>;
-    fn confirm_upgrade(env: Env) -> Result<(), Error>;
-    fn cancel_upgrade(env: Env) -> Result<(), Error>;
+    /// Propose a timelocked contract upgrade. Requires 2-of-3 upgrade-admin multisig.
+    /// Records the pending WASM hash, the proposer (via the two approvers) and
+    /// the proposal timestamp so that `confirm_upgrade` can enforce a safety
+    /// cooldown and validate the existing on-chain state before deploying the
+    /// new implementation.
+    fn propose_upgrade(
+        env: Env,
+        new_wasm_hash: BytesN<32>,
+        approver_a: Address,
+        approver_b: Address,
+    ) -> Result<(), Error>;
+    /// Confirm and execute a previously proposed upgrade once the timelock
+    /// cooldown has elapsed. Requires 2-of-3 upgrade-admin multisig. Applies upgrade
+    /// safety checks (implementation validity, storage integrity, license-holder
+    /// preservation) before atomically swapping the contract bytecode.
+    fn confirm_upgrade(env: Env, approver_a: Address, approver_b: Address) -> Result<(), Error>;
+    /// Cancel a pending upgrade before the timelock elapses (emergency abort).
+    /// Requires 2-of-3 upgrade-admin multisig. Clears the pending upgrade state.
+    fn cancel_upgrade(env: Env, approver_a: Address, approver_b: Address) -> Result<(), Error>;
+    /// Returns the currently pending WASM hash, if any.
     fn get_pending_upgrade(env: Env) -> Option<BytesN<32>>;
     fn extend_ttl(env: Env, key: DataKey) -> Result<(), Error>;
 
+    // ─── Bundle methods ──────────────────────────────────────────────────────
+
+    /// Create a bundle of existing active prompts owned by `creator`.
+    /// All prompt_ids must be active prompts whose `creator` field matches.
+    /// `price_stroops` is the single price a buyer pays for the entire bundle.
+    /// `asset` is the payment token (same restriction as individual prompts).
+    fn create_bundle(
+        env: Env,
+        creator: Address,
+        title: String,
+        description: String,
+        image_url: String,
+        prompt_ids: Vec<u128>,
+        price_stroops: i128,
+        asset: Address,
+    ) -> Result<u128, Error>;
+
+    /// Add a prompt to an existing bundle. Must be the bundle creator.
+    fn add_bundle_item(
+        env: Env,
+        creator: Address,
+        bundle_id: u128,
+        prompt_id: u128,
+    ) -> Result<(), Error>;
+
+    /// Remove a prompt from a bundle. Must be the bundle creator.
+    fn remove_bundle_item(
+        env: Env,
+        creator: Address,
+        bundle_id: u128,
+        prompt_id: u128,
+    ) -> Result<(), Error>;
+
+    /// Update the bundle price. Must be the bundle creator.
+    fn update_bundle_price(
+        env: Env,
+        creator: Address,
+        bundle_id: u128,
+        price_stroops: i128,
+    ) -> Result<(), Error>;
+
+    /// Toggle the bundle's active state. Must be the bundle creator.
+    fn set_bundle_active(
+        env: Env,
+        creator: Address,
+        bundle_id: u128,
+        active: bool,
+    ) -> Result<(), Error>;
+
+    /// Purchase a bundle atomically. Grants access to every current bundle item.
+    /// `payment_amount_stroops` must be >= bundle.price_stroops.
+    fn buy_bundle(
+        env: Env,
+        buyer: Address,
+        bundle_id: u128,
+        payment_amount_stroops: i128,
+        referrer: Option<Address>,
+    ) -> Result<(), Error>;
+
+    /// Returns true if the user has purchased the bundle (or is the creator).
+    fn has_bundle_access(env: Env, user: Address, bundle_id: u128) -> Result<bool, Error>;
+
+    fn get_bundle(env: Env, bundle_id: u128) -> Result<Bundle, Error>;
+    fn get_all_bundles(env: Env) -> Result<Vec<Bundle>, Error>;
+    fn get_bundles_by_creator(env: Env, creator: Address) -> Result<Vec<Bundle>, Error>;
+    fn get_bundles_by_buyer(env: Env, buyer: Address) -> Result<Vec<Bundle>, Error>;
     // ─── Contract state versioning ───────────────────────────────────────────
     /// Current schema version applied to this contract's storage. `0` means
     /// the contract predates this versioning scheme (never migrated).
@@ -664,4 +787,62 @@ pub trait PromptHashTrait {
 
     /// Read the current stake record for a prompt.
     fn get_stake(env: Env, prompt_id: u128) -> Result<Stake, Error>;
+
+    // ─── #195: Emergency pause with owner override ────────────────────────
+    /// Owner-only. Immediately pauses all purchases and transfers in case of
+    /// vulnerability discovery. Does not require multisig approval so the
+    /// owner can react quickly in emergencies.
+    fn emergency_pause(env: Env) -> Result<(), Error>;
+
+    /// Owner-only. Proposes an unpause with a timelock cooldown. The contract
+    /// remains paused until `confirm_unpause` is called after the cooldown.
+    fn propose_unpause(env: Env) -> Result<(), Error>;
+
+    /// Owner-only. Confirms and executes a previously proposed unpause once
+    /// the timelock cooldown has elapsed.
+    fn confirm_unpause(env: Env) -> Result<(), Error>;
+
+    /// Owner-only. Cancels a pending unpause proposal.
+    fn cancel_unpause(env: Env) -> Result<(), Error>;
+
+    /// Returns the timestamp when unpause was proposed, if any.
+    fn get_pending_unpause(env: Env) -> Option<u64>;
+}
+
+// ─── Bundle on-chain types ───────────────────────────────────────────────────
+
+pub const MAX_BUNDLE_TITLE_LEN: u32 = 120;
+pub const MAX_BUNDLE_DESC_LEN: u32 = 512;
+pub const MAX_BUNDLE_ITEMS: u32 = 20;
+
+/// On-chain bundle record. prompt_ids stores the current set of member prompts.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Bundle {
+    pub id: u128,
+    pub creator: Address,
+    pub title: String,
+    pub description: String,
+    pub image_url: String,
+    /// Current set of member prompt IDs. Capped at MAX_BUNDLE_ITEMS.
+    pub prompt_ids: Vec<u128>,
+    pub price_stroops: i128,
+    pub asset: Address,
+    pub active: bool,
+    pub sales_count: u64,
+    pub created_at: u64,
+}
+
+/// Per-buyer bundle purchase record. Records the snapshot of prompt_ids that
+/// were current at time of purchase so the unlock layer can serve each one.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BundlePurchase {
+    pub bundle_id: u128,
+    pub owner: Address,
+    pub original_creator: Address,
+    pub paid_price: i128,
+    pub purchased_at: u64,
+    /// Snapshot of prompt IDs that were in the bundle when purchased.
+    pub purchased_prompt_ids: Vec<u128>,
 }

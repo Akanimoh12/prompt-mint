@@ -51,6 +51,7 @@ const purchaseSchema = new mongoose.Schema(
 purchaseSchema.index({ promptId: 1, buyerWallet: 1 });
 purchaseSchema.index({ buyerWallet: 1, createdAt: -1 });
 purchaseSchema.index({ promptId: 1, createdAt: -1 });
+purchaseSchema.index({ promptId: 1, buyerWallet: 1 }, { unique: true });
 
 const Purchase = mongoose.models.Purchase || mongoose.model("Purchase", purchaseSchema);
 export default Purchase;

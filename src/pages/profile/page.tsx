@@ -35,13 +35,19 @@ import { UnlockExplainer, type UnlockState } from "@/components/UnlockExplainer"
 import { WebhookSettings } from "@/components/WebhookSettings";
 import { NotificationPreferences } from "@/components/NotificationPreferences";
 import { PostVersionUpdate } from "@/components/PostVersionUpdate";
+import { CreatorReputationPanel } from "@/components/CreatorReputation";
+import { ReputationSummary } from "@/components/ReputationSummary";
+import { CreatorVerificationCard } from "@/components/CreatorVerificationCard";
+import { VerifiedCreatorBadge } from "@/components/VerifiedCreatorBadge";
 import { RecentlyViewed } from "@/components/RecentlyViewed";
+import { SkeletonCard } from "@/components/Skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/hooks/useWallet";
 import { useWalletBalance } from "@/hooks/useWalletBalance";
+import { useCreatorVerification } from "@/hooks/useCreatorVerification";
 import { invalidateAllPromptQueries } from "@/hooks/useContractSync";
 import { browserStellarConfig } from "@/lib/stellar/browserConfig";
 import {
@@ -109,9 +115,10 @@ function AlertBanner({
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex min-h-56 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] p-8 text-sm text-slate-300">
-      <Loader2 className="mr-2 h-4 w-4 animate-spin text-cyan-200" />
-      {label}
+    <div className="space-y-4" role="status" aria-label={label}>
+      {[...Array(3)].map((_, i) => (
+        <SkeletonCard key={i} withMedia={false} lines={2} />
+      ))}
     </div>
   );
 }
@@ -795,6 +802,8 @@ export default function ProfilePage() {
   const creatorShareUrl =
     profileAddress != null ? buildCreatorShareUrl(profileAddress) : null;
 
+  const publicVerification = useCreatorVerification(profileAddress ?? undefined);
+
   const createdQuery = useQuery({
     queryKey: ["created-prompts", profileAddress],
     queryFn: async () =>
@@ -1044,6 +1053,14 @@ export default function ProfilePage() {
           )}
         </section>
 
+        {profileAddress ? (
+          <ReputationSummary address={profileAddress} />
+        ) : null}
+
+        {profileAddress ? (
+          <CreatorReputationPanel address={profileAddress} />
+        ) : null}
+
         <div>
           {isPublicView && profileAddress ? (
             <section className="space-y-6">
@@ -1054,6 +1071,9 @@ export default function ProfilePage() {
                 <p className="mt-2 font-mono text-sm text-slate-200 break-all">
                   {profileAddress}
                 </p>
+                <div className="mt-3">
+                  <VerifiedCreatorBadge verification={publicVerification.verification} />
+                </div>
                 <p className="mt-3 text-sm text-slate-400">
                   {activeListingCount} active listing
                   {activeListingCount === 1 ? "" : "s"}
@@ -1255,6 +1275,7 @@ export default function ProfilePage() {
                       </div>
                     )}
                     <div className="space-y-6 mt-6">
+                      <CreatorVerificationCard address={address} />
                       <WebhookSettings walletAddress={address} />
                       <NotificationPreferences walletAddress={address} />
                     </div>

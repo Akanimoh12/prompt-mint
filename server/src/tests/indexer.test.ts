@@ -19,13 +19,43 @@ let serverInstance: { getLatestLedger: jest.Mock; getEvents: jest.Mock };
 
 beforeEach(() => {
   jest.clearAllMocks();
+let startIndexer: any;
+let mockGetLatestLedger: jest.Mock;
+let mockGetEvents: jest.Mock;
+let mockSave: jest.Mock;
+let mockFindOneAndUpdate: jest.Mock;
+
+beforeEach(async () => {
+  process.env.PUBLIC_PROMPT_HASH_CONTRACT_ID = "CCONTRACT";
+  delete process.env.INDEXER_START_LEDGER;
+
+  jest.resetModules();
   jest.useFakeTimers();
-  mockFindOneAndUpdate.mockResolvedValue({
+
+  mockGetLatestLedger = jest.fn();
+  mockGetEvents = jest.fn();
+  mockSave = jest.fn();
+  mockFindOneAndUpdate = jest.fn().mockResolvedValue({
     lastIndexedLedger: 0,
     save: mockSave,
   });
   const rpc = jest.requireMock("@stellar/stellar-sdk/rpc");
   serverInstance = rpc.__testInstance;
+
+  jest.doMock("../models/IndexerState", () => ({
+    IndexerState: {
+      findOneAndUpdate: mockFindOneAndUpdate,
+    },
+  }));
+
+  jest.doMock("@stellar/stellar-sdk/rpc", () => ({
+    Server: jest.fn(() => ({
+      getLatestLedger: mockGetLatestLedger,
+      getEvents: mockGetEvents,
+    })),
+  }));
+
+  startIndexer = require("../services/indexer").startIndexer;
 });
 
 afterEach(() => {
@@ -45,6 +75,8 @@ describe("indexer backfill", () => {
     serverInstance.getEvents.mockResolvedValue({ events: [] });
 
     await startAndWait();
+    await startIndexer();
+    await jest.advanceTimersByTimeAsync(5000);
 
     expect(serverInstance.getEvents).toHaveBeenCalledWith(
       expect.objectContaining({ startLedger: 1000 }),
@@ -57,6 +89,8 @@ describe("indexer backfill", () => {
     serverInstance.getEvents.mockResolvedValue({ events: [] });
 
     await startAndWait();
+    await startIndexer();
+    await jest.advanceTimersByTimeAsync(5000);
 
     expect(serverInstance.getEvents).toHaveBeenCalledTimes(3);
     expect(serverInstance.getEvents).toHaveBeenNthCalledWith(
@@ -78,6 +112,8 @@ describe("indexer backfill", () => {
     serverInstance.getEvents.mockResolvedValue({ events: [] });
 
     await startAndWait();
+    await startIndexer();
+    await jest.advanceTimersByTimeAsync(5000);
 
     expect(mockSave).toHaveBeenCalled();
   });

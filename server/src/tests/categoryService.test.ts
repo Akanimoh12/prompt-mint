@@ -1,3 +1,5 @@
+/* global describe, it, expect, beforeEach */
+
 describe("Category Service", () => {
   const mockCategories = [
     {

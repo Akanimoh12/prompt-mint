@@ -1,5 +1,5 @@
-import type { CartItem, BulkPurchaseItem } from '@/providers/CartProvider';
-import type { PromptRecord, PromptHashConfig } from '@/lib/stellar/promptHashClient';
+import type { CartItem } from '@/providers/CartProvider';
+import type { BulkPurchaseItem, PromptHashConfig } from '@/lib/stellar/promptHashClient';
 import { PromptHashClient } from '@/lib/stellar/promptHashClient';
 import {
   fetchCheckoutAccountSnapshot,
@@ -192,7 +192,7 @@ export async function validateCheckout(
 /**
  * Prepares items for bulk purchase call.
  */
-export function prepareBulkPurchaseItems(cartItems: CartItem[]): BulkPurchaseItem[] {
+export function prepareBulkPurchaseItems(cartItems: CartItem[]): { promptId: string; priceStroops: bigint }[] {
   return cartItems.map((item) => ({
     promptId: item.promptId,
     priceStroops: item.priceStroops,

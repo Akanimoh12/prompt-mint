@@ -5,6 +5,8 @@
  * This should NOT reach production.
  * TODO: Restore real Soroban contract integration before release.
  */
+import type { TransactionStepId } from "@/lib/checkout/transactionSteps";
+
 let hasWarnedMock = false;
 const warnMockUse = () => {
   if (hasWarnedMock) return;
@@ -16,6 +18,7 @@ const warnMockUse = () => {
 
 export interface PromptHashConfig {
   rpcUrl: string;
+  horizonUrl?: string;
   networkPassphrase: string;
   allowHttp?: boolean;
   promptHashContractId: string;
@@ -106,6 +109,8 @@ export const CONTRACT_ERROR_CODES = {
   INVALID_PRICE: "INVALID_PRICE",
   ALREADY_PURCHASED: "ALREADY_PURCHASED",
   LISTING_EXPIRED: "LISTING_EXPIRED",
+  INSUFFICIENT_BALANCE: "INSUFFICIENT_BALANCE",
+  PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
   UNKNOWN: "UNKNOWN",
 } as const;
 
@@ -132,34 +137,13 @@ export function classifyContractError(error: unknown): ContractErrorDetails {
   const raw = normalizeContractErrorText(error).trim();
   const normalized = raw.toLowerCase();
 
-  if (normalized.includes("paused") || normalized.includes("contractispaused")) {
-    return {
-      code: CONTRACT_ERROR_CODES.CONTRACT_PAUSED,
-      message: "The marketplace is temporarily paused. Please try again shortly.",
-      isUserActionable: true,
-      raw,
-    };
-  }
-
-  if (normalized.includes("promptnotfound") || normalized.includes("not found") || normalized.includes("prompt #")) {
-    return {
-      code: CONTRACT_ERROR_CODES.PROMPT_NOT_FOUND,
-      message: "The requested prompt could not be found.",
-      isUserActionable: true,
-      raw,
-    };
-  }
-
-  if (normalized.includes("unauthorized") || normalized.includes("not authorized")) {
-    return {
-      code: CONTRACT_ERROR_CODES.UNAUTHORIZED,
-      message: "You are not authorized to perform this action.",
-      isUserActionable: true,
-      raw,
-    };
-  }
-
-  if (normalized.includes("alreadypurchased") || normalized.includes("already purchased")) {
+  // Soroban Error(Contract, #1) or contract code 1: Already Purchased
+  if (
+    normalized.includes("alreadypurchased") ||
+    normalized.includes("already purchased") ||
+    /error\(contract,\s*#?1\)/i.test(raw) ||
+    /contracterror\(1\)/i.test(raw)
+  ) {
     return {
       code: CONTRACT_ERROR_CODES.ALREADY_PURCHASED,
       message: "You already have access to this prompt.",
@@ -168,16 +152,59 @@ export function classifyContractError(error: unknown): ContractErrorDetails {
     };
   }
 
-  if (normalized.includes("listingexpired") || normalized.includes("expired")) {
+  // Soroban Error(Contract, #2) or contract code 2: Prompt Not Found
+  if (
+    normalized.includes("promptnotfound") ||
+    normalized.includes("not found") ||
+    normalized.includes("prompt #") ||
+    /error\(contract,\s*#?2\)/i.test(raw) ||
+    /contracterror\(2\)/i.test(raw)
+  ) {
     return {
-      code: CONTRACT_ERROR_CODES.LISTING_EXPIRED,
-      message: "This listing is no longer available for purchase.",
+      code: CONTRACT_ERROR_CODES.PROMPT_NOT_FOUND,
+      message: "The requested prompt could not be found.",
       isUserActionable: true,
       raw,
     };
   }
 
-  if (normalized.includes("invalidprice") || normalized.includes("invalid price")) {
+  // Soroban Error(Contract, #3) or contract code 3: Unauthorized
+  if (
+    normalized.includes("unauthorized") ||
+    normalized.includes("not authorized") ||
+    /error\(contract,\s*#?3\)/i.test(raw) ||
+    /contracterror\(3\)/i.test(raw)
+  ) {
+    return {
+      code: CONTRACT_ERROR_CODES.UNAUTHORIZED,
+      message: "You are not authorized to perform this action.",
+      isUserActionable: true,
+      raw,
+    };
+  }
+
+  // Soroban Error(Contract, #4) or contract code 4: Contract Paused
+  if (
+    normalized.includes("paused") ||
+    normalized.includes("contractispaused") ||
+    /error\(contract,\s*#?4\)/i.test(raw) ||
+    /contracterror\(4\)/i.test(raw)
+  ) {
+    return {
+      code: CONTRACT_ERROR_CODES.CONTRACT_PAUSED,
+      message: "The marketplace is temporarily paused. Please try again shortly.",
+      isUserActionable: true,
+      raw,
+    };
+  }
+
+  // Soroban Error(Contract, #5) or contract code 5: Invalid Price
+  if (
+    normalized.includes("invalidprice") ||
+    normalized.includes("invalid price") ||
+    /error\(contract,\s*#?5\)/i.test(raw) ||
+    /contracterror\(5\)/i.test(raw)
+  ) {
     return {
       code: CONTRACT_ERROR_CODES.INVALID_PRICE,
       message: "The requested price is invalid.",
@@ -186,9 +213,56 @@ export function classifyContractError(error: unknown): ContractErrorDetails {
     };
   }
 
+  // Soroban Error(Contract, #6) or contract code 6: Listing Expired
+  if (
+    normalized.includes("listingexpired") ||
+    normalized.includes("expired") ||
+    /error\(contract,\s*#?6\)/i.test(raw) ||
+    /contracterror\(6\)/i.test(raw)
+  ) {
+    return {
+      code: CONTRACT_ERROR_CODES.LISTING_EXPIRED,
+      message: "This listing is no longer available for purchase.",
+      isUserActionable: true,
+      raw,
+    };
+  }
+
+  if (
+    normalized.includes("insufficientbalance") ||
+    normalized.includes("insufficient balance") ||
+    normalized.includes("op_underfunded") ||
+    /error\(contract,\s*#?7\)/i.test(raw) ||
+    /contracterror\(7\)/i.test(raw)
+  ) {
+    return {
+      code: CONTRACT_ERROR_CODES.INSUFFICIENT_BALANCE,
+      message: "Your wallet doesn't have enough balance to complete this purchase. Please fund your wallet and try again.",
+      isUserActionable: true,
+      raw,
+    };
+  }
+
+  if (
+    normalized.includes("payloadtoolarge") ||
+    normalized.includes("payload too large") ||
+    normalized.includes("invalidfieldlength")
+  ) {
+    return {
+      code: CONTRACT_ERROR_CODES.PAYLOAD_TOO_LARGE,
+      message: "Your prompt content is too large to store on-chain. Please shorten it to under 4,000 characters and try again.",
+      isUserActionable: true,
+      raw,
+    };
+  }
+
+  // If raw error string contains a custom Error message, extract it if possible
+  const customErrorMatch = raw.match(/Error\(([^)]+)\)/i) || raw.match(/HostError:\s*(.+)/i);
+  const customMsg = customErrorMatch ? customErrorMatch[1].trim() : null;
+
   return {
     code: CONTRACT_ERROR_CODES.UNKNOWN,
-    message: "The marketplace could not complete that action. Please try again later.",
+    message: customMsg ? `Contract reverted: ${customMsg}` : (raw.length > 0 && raw.length < 150 ? raw : "The marketplace could not complete that action. Please try again later."),
     isUserActionable: true,
     raw,
   };
@@ -254,35 +328,126 @@ export class PromptHashClient {
     });
   }
 
+  static async giftPrompt(
+    _promptId: bigint | string,
+    _sender: string,
+    _recipient: string,
+  ): Promise<{ txHash: string }> {
+    return { txHash: "mock_gift_tx_hash" };
+  }
+
   /**
-   * Invokes the Soroban contract to purchase multiple prompts atomically.
-   * The entire transaction reverts if any individual purchase fails.
+   * Invokes the Soroban contract to gift an already-purchased prompt to a
+   * recipient (transfers ownership/access to the recipient's address).
    */
-  static async purchasePromptsBulk(
-    _items: BulkPurchaseItem[],
-    _userAddress: string,
+  static async giftPrompt(
+    _promptId: string,
+    _senderAddress: string,
+    _recipientAddress: string,
     options?: { forceFailure?: string; delay?: number },
-  ): Promise<BulkPurchaseResult> {
+  ): Promise<{ txHash: string; success: boolean; recipientAddress: string }> {
     warnMockUse();
     return new Promise((resolve, reject) => {
-      const delay = options?.delay ?? 3000;
+      const delay = options?.delay ?? 2000;
       setTimeout(() => {
         if (options?.forceFailure) {
           return reject(new Error(options.forceFailure));
         }
 
-        const txHash =
-          "tx_bulk_" + Math.random().toString(16).slice(2, 14).padStart(12, "0");
-        
-        const results = _items.map((item) => ({
-          promptId: item.promptId,
+        const mockHash =
+          "tx_gift_" + Math.random().toString(16).slice(2, 14).padStart(12, "0");
+        resolve({
+          txHash: mockHash,
           success: true,
-          txHash,
-        }));
-
-        resolve({ txHash, results });
+          recipientAddress: _recipientAddress,
+        });
       }, delay);
     });
+  }
+
+  /**
+   * Transfers a previously-purchased prompt license to a new recipient for a specified price.
+   * The current owner loses access when the transfer is confirmed.
+   */
+  static async transferLicense(
+    _promptId: string,
+    _ownerAddress: string,
+    _recipientAddress: string,
+    _priceStroops: bigint,
+    options?: { forceFailure?: string; delay?: number },
+  ): Promise<{ txHash: string; success: boolean; recipientAddress: string }> {
+    warnMockUse();
+    return new Promise((resolve, reject) => {
+      const delay = options?.delay ?? 2000;
+      setTimeout(() => {
+        if (options?.forceFailure) {
+          return reject(new Error(options.forceFailure));
+        }
+
+        const mockHash =
+          "tx_transfer_" + Math.random().toString(16).slice(2, 14).padStart(12, "0");
+        resolve({
+          txHash: mockHash,
+          success: true,
+          recipientAddress: _recipientAddress,
+        });
+      }, delay);
+    });
+  }
+
+  /**
+   * Invokes the Soroban contract to purchase multiple prompts atomically.
+   * The entire transaction reverts if any individual purchase fails.
+   *
+   * Progresses through the real sequence of async transaction stages
+   * (connecting -> signing -> submitting -> confirming -> complete),
+   * reporting each transition via `onStep` as it actually happens rather
+   * than on a single fixed timer (#266). Each stage is its own awaited
+   * step so a caller can render live progress and callers that don't
+   * care about the stages can simply await the final result.
+   */
+  static async purchasePromptsBulk(
+    _items: BulkPurchaseItem[],
+    _userAddress: string,
+    options?: {
+      forceFailure?: string;
+      /** Which stage `forceFailure` should be raised at. Defaults to "submitting". */
+      failAtStep?: TransactionStepId;
+      delay?: number;
+      onStep?: (_step: TransactionStepId) => void;
+    },
+  ): Promise<BulkPurchaseResult> {
+    warnMockUse();
+    const stepDelay = options?.delay ?? 750;
+    const failAtStep = options?.failAtStep ?? "submitting";
+
+    const runStep = async (step: TransactionStepId) => {
+      options?.onStep?.(step);
+      if (options?.forceFailure && failAtStep === step) {
+        throw new Error(options.forceFailure);
+      }
+      await new Promise((resolve) => setTimeout(resolve, stepDelay));
+    };
+
+    // Each `await` below represents a real, independently-timed stage of
+    // the transaction lifecycle rather than one opaque delay.
+    await runStep("connecting");
+    await runStep("signing");
+    await runStep("submitting");
+    await runStep("confirming");
+
+    const txHash =
+      "tx_bulk_" + Math.random().toString(16).slice(2, 14).padStart(12, "0");
+
+    const results = _items.map((item) => ({
+      promptId: item.promptId,
+      success: true,
+      txHash,
+    }));
+
+    options?.onStep?.("complete");
+
+    return { txHash, results };
   }
 
   static async getAllPrompts(
@@ -524,6 +689,257 @@ export const updatePromptPrice = async (
     promptId,
     newPrice,
   );
+
+// ─── Bundle types ─────────────────────────────────────────────────────────────
+
+export interface BundleRecord {
+  id: bigint;
+  creator: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+  /** Current member prompt IDs at time of last fetch. */
+  promptIds: bigint[];
+  priceStroops: bigint;
+  asset: string;
+  active: boolean;
+  salesCount: number;
+  createdAt: number;
+}
+
+export interface BundlePurchaseRecord {
+  bundleId: bigint;
+  owner: string;
+  originalCreator: string;
+  paidPrice: bigint;
+  purchasedAt: number;
+  /** Snapshot of prompt IDs that were in the bundle at purchase time. */
+  purchasedPromptIds: bigint[];
+}
+
+export interface CreateBundleInput {
+  title: string;
+  description: string;
+  imageUrl: string;
+  promptIds: bigint[];
+  priceStroops: bigint;
+}
+
+// ─── Bundle mock helpers ──────────────────────────────────────────────────────
+
+const MOCK_BUNDLES: BundleRecord[] = [
+  {
+    id: 1n,
+    creator: "GD...1234",
+    title: "Developer Starter Pack",
+    description: "Three high-performance prompts for software engineers covering architecture, code review, and debugging.",
+    imageUrl: "",
+    promptIds: [1n, 2n],
+    priceStroops: 150_000_000n, // 15 XLM
+    asset: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    active: true,
+    salesCount: 7,
+    createdAt: 1_700_000_000,
+  },
+];
+
+// ─── Bundle client methods on PromptHashClient ────────────────────────────────
+
+// Extend the existing class with static bundle methods.
+// Because promptHashClient.ts is fully mocked, these follow the same pattern.
+export class BundleHashClient {
+  static async getAllBundles(
+    _config: PromptHashConfig,
+  ): Promise<BundleRecord[]> {
+    warnMockUse();
+    return new Promise((resolve) => setTimeout(() => resolve(MOCK_BUNDLES), 800));
+  }
+
+  static async getBundle(
+    _config: PromptHashConfig,
+    bundleId: bigint,
+  ): Promise<BundleRecord> {
+    warnMockUse();
+    const match = MOCK_BUNDLES.find((b) => b.id === bundleId);
+    if (!match) throw new Error(`Bundle #${bundleId.toString()} not found.`);
+    return match;
+  }
+
+  static async getBundlesByBuyer(
+    _config: PromptHashConfig,
+    _address: string,
+  ): Promise<BundleRecord[]> {
+    warnMockUse();
+    return [];
+  }
+
+  static async getBundlesByCreator(
+    _config: PromptHashConfig,
+    _address: string,
+  ): Promise<BundleRecord[]> {
+    warnMockUse();
+    return MOCK_BUNDLES.filter((b) => b.creator === _address);
+  }
+
+  static async hasBundleAccess(
+    _config: PromptHashConfig,
+    _address: string,
+    _bundleId: bigint,
+  ): Promise<boolean> {
+    warnMockUse();
+    return false;
+  }
+
+  static async buyBundle(
+    _config: PromptHashConfig,
+    _walletSigner: any,
+    _address: string,
+    _bundleId: bigint,
+    _paymentStroops: bigint,
+    _referrer?: string,
+  ): Promise<{ txHash: string; success: boolean }> {
+    warnMockUse();
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        const txHash =
+          "tx_" + Math.random().toString(16).slice(2, 14).padStart(12, "0");
+        resolve({ txHash, success: true });
+      }, 2000),
+    );
+  }
+
+  static async createBundle(
+    _config: PromptHashConfig,
+    _walletSigner: any,
+    _address: string,
+    _data: CreateBundleInput,
+  ): Promise<{ success: boolean; txHash: string; bundleId: string }> {
+    warnMockUse();
+    return { success: true, txHash: "tx_mock_bundle", bundleId: "1" };
+  }
+
+  static async addBundleItem(
+    _config: PromptHashConfig,
+    _walletSigner: any,
+    _address: string,
+    _bundleId: bigint,
+    _promptId: bigint,
+  ): Promise<{ success: boolean }> {
+    warnMockUse();
+    return { success: true };
+  }
+
+  static async removeBundleItem(
+    _config: PromptHashConfig,
+    _walletSigner: any,
+    _address: string,
+    _bundleId: bigint,
+    _promptId: bigint,
+  ): Promise<{ success: boolean }> {
+    warnMockUse();
+    return { success: true };
+  }
+
+  static async updateBundlePrice(
+    _config: PromptHashConfig,
+    _walletSigner: any,
+    _address: string,
+    _bundleId: bigint,
+    _priceStroops: bigint,
+  ): Promise<{ success: boolean }> {
+    warnMockUse();
+    return { success: true };
+  }
+
+  static async setBundleActive(
+    _config: PromptHashConfig,
+    _walletSigner: any,
+    _address: string,
+    _bundleId: bigint,
+    _active: boolean,
+  ): Promise<{ success: boolean }> {
+    warnMockUse();
+    return { success: true };
+  }
+}
+
+// ─── Standalone bundle exports (mirrors the prompt standalone pattern) ─────────
+
+export const getAllBundles = (config: PromptHashConfig) =>
+  BundleHashClient.getAllBundles(config);
+
+export const getBundle = (config: PromptHashConfig, bundleId: bigint) =>
+  BundleHashClient.getBundle(config, bundleId);
+
+export const getBundlesByBuyer = (config: PromptHashConfig, address: string) =>
+  BundleHashClient.getBundlesByBuyer(config, address);
+
+export const getBundlesByCreator = (
+  config: PromptHashConfig,
+  address: string,
+) => BundleHashClient.getBundlesByCreator(config, address);
+
+export const hasBundleAccess = (
+  config: PromptHashConfig,
+  address: string,
+  bundleId: bigint,
+) => BundleHashClient.hasBundleAccess(config, address, bundleId);
+
+export const buyBundle = (
+  config: PromptHashConfig,
+  walletSigner: any,
+  address: string,
+  bundleId: bigint,
+  paymentStroops: bigint,
+  referrer?: string,
+) =>
+  BundleHashClient.buyBundle(
+    config,
+    walletSigner,
+    address,
+    bundleId,
+    paymentStroops,
+    referrer,
+  );
+
+export const createBundle = (
+  config: PromptHashConfig,
+  walletSigner: any,
+  address: string,
+  data: CreateBundleInput,
+) => BundleHashClient.createBundle(config, walletSigner, address, data);
+
+export const addBundleItem = (
+  config: PromptHashConfig,
+  walletSigner: any,
+  address: string,
+  bundleId: bigint,
+  promptId: bigint,
+) => BundleHashClient.addBundleItem(config, walletSigner, address, bundleId, promptId);
+
+export const removeBundleItem = (
+  config: PromptHashConfig,
+  walletSigner: any,
+  address: string,
+  bundleId: bigint,
+  promptId: bigint,
+) => BundleHashClient.removeBundleItem(config, walletSigner, address, bundleId, promptId);
+
+export const updateBundlePrice = (
+  config: PromptHashConfig,
+  walletSigner: any,
+  address: string,
+  bundleId: bigint,
+  priceStroops: bigint,
+) => BundleHashClient.updateBundlePrice(config, walletSigner, address, bundleId, priceStroops);
+
+export const setBundleActive = (
+  config: PromptHashConfig,
+  walletSigner: any,
+  address: string,
+  bundleId: bigint,
+  active: boolean,
+) => BundleHashClient.setBundleActive(config, walletSigner, address, bundleId, active);
 export const getPurchaseDetails = async (
   config: PromptHashConfig,
   promptId: bigint,
@@ -534,3 +950,17 @@ export const getPromptEncryptionVersion = async (
   promptId: bigint,
   version: number,
 ) => PromptHashClient.getPromptEncryptionVersion(config, promptId, version);
+export const transferLicense = async (
+  promptId: string,
+  ownerAddress: string,
+  recipientAddress: string,
+  priceStroops: bigint,
+  options?: { forceFailure?: string; delay?: number },
+) =>
+  PromptHashClient.transferLicense(
+    promptId,
+    ownerAddress,
+    recipientAddress,
+    priceStroops,
+    options,
+  );

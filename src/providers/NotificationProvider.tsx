@@ -19,6 +19,7 @@ import {
   type NotificationVariant,
 } from "@/lib/notifications/store";
 import type { NotificationTransport } from "@/lib/notifications/transport";
+import { deliverPushOrFallback } from "@/lib/notifications/push";
 
 // Backwards-compatible aliases (existing imports depend on these names).
 export type NotificationType = NotificationVariant;
@@ -181,14 +182,20 @@ export const NotificationProvider: React.FC<{
   useEffect(() => {
     if (!transport) return;
     return transport.subscribe((incoming) => {
-      addRecordRef.current(
-        {
-          ...incoming,
-          isRead: incoming.isRead ?? false,
-          isVisible: false,
+      const record: NotificationRecord = {
+        ...incoming,
+        isRead: incoming.isRead ?? false,
+        isVisible: false,
+      };
+      addRecordRef.current(record, false);
+      // Push is best-effort (#751): when the browser cannot show one, the
+      // record is surfaced in-app instead so the notification is never lost.
+      // The store dedupes by id, so this cannot create a second entry.
+      void deliverPushOrFallback(record, {
+        onInAppFallback: (fallbackRecord) => {
+          addRecordRef.current(fallbackRecord, true);
         },
-        false,
-      );
+      });
     });
   }, [transport]);
 
@@ -226,7 +233,7 @@ export const NotificationProvider: React.FC<{
               title={
                 toast.title ? `${toast.title}: ${toast.message}` : toast.message
               }
-              variant={toast.type}
+              variant={toast.type === "secondary" ? "primary" : (toast.type as "primary" | "success" | "error" | "warning")}
             />
           </div>
         ))}
