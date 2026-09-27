@@ -84,3 +84,32 @@ An unanchored environment variable reference (`NEXT_PUBLIC_API_BASE_URL`) missin
    * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
    * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
 3. **Patch Commit:** Verified environment variable injection and updated build configuration defaults (`fix(ops): restore missing production environment variables`).
+
+# Incident Timeline & Resolution Report
+
+**Incident ID:** `#841` (SEV-1)
+**Failed SHA:** `ca5e8b2413aa87c9ea3396cb1bbbde54f9fbdb58` (Branch: `main`)
+**Trigger:** Automated Rollback System (`docs/operations/auto-rollback.md`)
+**Actor:** `barry01-hash`
+
+---
+
+### Incident Timeline (UTC)
+
+* **08:49:46** — GitHub Actions workflow `Deploy - Frontend to Vercel and Artifacts` initiated on commit `ca5e8b2`.
+* **08:52:15** — Build step failed due to duplicate keys in `package.json`, invalid TypeScript configuration (`ignoreDeprecations`), and corrupted module syntax in `src/util/wallet.ts` resulting from a broken dependency bump merge.
+* **08:52:30** — Vercel deployment hook failed with exit status code 1 (`conclusion: failure`).
+* **08:52:45** — Automated rollback daemon triggered, reverting active routing pointers to the previous stable release artifact.
+* **08:54:10** — Health check probes (`/api/health`, `/api/status`) verified 100% operational status across all edge endpoints.
+
+---
+
+### Root Cause Analysis
+An automated dependency update (`dependabot`) bump across npm packages produced duplicate key entries in `package.json`, an invalid `ignoreDeprecations` option in `tsconfig.node.json`, and syntax corruption in `src/util/wallet.ts` during merge resolution, causing frontend typecheck and build failures on Vercel.
+
+### Corrective Actions & Verification
+1. **Rollback Verification:** Production confirmed serving last known-good stable build artifact.
+2. **Health Check Validation:**
+   * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
+   * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
+3. **Patch Commit:** Resolved merge conflict corruption in `src/util/wallet.ts`, removed duplicate dependencies in `package.json`, updated `ignoreDeprecations` in `tsconfig` files, and verified static build and type checks pass cleanly (`fix(ops): resolve SEV-1 frontend deploy failure and complete incident #841 remediation`).
