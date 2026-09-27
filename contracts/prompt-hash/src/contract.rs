@@ -40,6 +40,9 @@ const UPGRADE_COOLDOWN_SECS: u64 = 86_400; // 24 hours
 /// before funds can leave custody, matching the platform's weekly cadence.
 /// (No sibling-contract `*_LOCK_PERIOD` precedent exists to reuse.)
 const STAKE_COOLDOWN_SECS: u64 = 7 * 24 * 60 * 60;
+/// #195 – cooldown before an emergency-paused contract can be unpaused,
+/// in seconds. 24 hours gives the team time to investigate and coordinate.
+const EMERGENCY_UNPAUSE_COOLDOWN_SECS: u64 = 86_400;
 
 #[contract]
 pub struct PromptHashContract;
@@ -48,22 +51,43 @@ pub struct PromptHashContract;
 impl PromptHashTrait for PromptHashContract {
     fn __constructor(
         env: Env,
-        admin: Address,
-        admin_two: Address,
-        admin_three: Address,
+        config_admin: Address,
+        config_admin_two: Address,
+        config_admin_three: Address,
+        upgrade_admin: Address,
+        upgrade_admin_two: Address,
+        upgrade_admin_three: Address,
         fee_wallet: Address,
         xlm_sac: Address,
     ) -> Result<(), Error> {
-        ensure(
-            admin != admin_two && admin != admin_three && admin_two != admin_three,
-            Error::Unauthorized,
+        ensure(!Storage::is_initialized(&env), Error::AlreadyInitialized)?;
+        validate_admin_roles(
+            &config_admin,
+            &config_admin_two,
+            &config_admin_three,
+            &upgrade_admin,
+            &upgrade_admin_two,
+            &upgrade_admin_three,
         )?;
-        ownable::set_owner(&env, &admin);
-        let admin_signers = Vec::from_array(
+        ownable::set_owner(&env, &config_admin);
+        let config_admin_signers = Vec::from_array(
             &env,
-            [admin.clone(), admin_two.clone(), admin_three.clone()],
+            [
+                config_admin.clone(),
+                config_admin_two.clone(),
+                config_admin_three.clone(),
+            ],
         );
-        Storage::set_admin_signers(&env, &admin_signers);
+        let upgrade_admin_signers = Vec::from_array(
+            &env,
+            [
+                upgrade_admin.clone(),
+                upgrade_admin_two.clone(),
+                upgrade_admin_three.clone(),
+            ],
+        );
+        Storage::set_config_admin_signers(&env, &config_admin_signers);
+        Storage::set_upgrade_admin_signers(&env, &upgrade_admin_signers);
         Storage::set_fee_wallet(&env, &fee_wallet);
         Storage::set_fee_percentage(&env, &DEFAULT_FEE_BPS);
         Storage::set_xlm_address(&env, &xlm_sac);
@@ -557,6 +581,31 @@ impl PromptHashTrait for PromptHashContract {
         Ok(())
     }
 
+    fn revoke_access(
+        env: Env,
+        caller: Address,
+        prompt_id: u128,
+        buyer: Address,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+        let prompt = Storage::require_prompt(&env, prompt_id)?;
+        
+        let is_creator = prompt.creator == caller;
+        let is_admin = Storage::is_admin_signer(&env, &caller);
+        
+        if !is_creator && !is_admin {
+            return Err(Error::Unauthorized);
+        }
+        
+        let mut purchase = Storage::require_purchase(&env, prompt_id, &buyer)?;
+        purchase.expires_at = 0;
+        Storage::save_purchase(&env, &purchase);
+        
+        Events::emit_access_revoked(&env, prompt_id, buyer, caller);
+        
+        Ok(())
+    }
+
     fn has_access(env: Env, user: Address, prompt_id: u128) -> Result<bool, Error> {
         let prompt = Storage::require_prompt(&env, prompt_id)?;
         let now = env.ledger().timestamp();
@@ -575,8 +624,8 @@ impl PromptHashTrait for PromptHashContract {
         Storage::require_prompt(&env, prompt_id)
     }
 
-    fn get_all_prompts(env: Env) -> Result<Vec<Prompt>, Error> {
-        Ok(Storage::get_all_prompts(&env))
+    fn get_all_prompts(env: Env, start_index: u128, limit: u32) -> Result<(Vec<Prompt>, u128), Error> {
+        Ok(Storage::get_all_prompts(&env, start_index, limit))
     }
 
     fn get_prompts_by_creator(env: Env, creator: Address) -> Result<Vec<Prompt>, Error> {
@@ -689,9 +738,9 @@ impl PromptHashTrait for PromptHashContract {
         approver_a: Address,
         approver_b: Address,
     ) -> Result<(), Error> {
-        require_admin_multisig(&env, &approver_a, &approver_b)?;
+        require_config_admin_multisig(&env, &approver_a, &approver_b)?;
         Storage::require_no_reentrancy(&env)?;
-        ensure(new_fee_percentage <= MAX_BPS, Error::InvalidFeePercentage)?;
+        ensure(new_fee_percentage <= MAX_FEE_BPS, Error::FeeExceedsMaximum)?;
         Storage::set_fee_percentage(&env, &new_fee_percentage);
         Events::emit_fee_updated(&env, new_fee_percentage);
         Ok(())
@@ -703,8 +752,12 @@ impl PromptHashTrait for PromptHashContract {
         approver_a: Address,
         approver_b: Address,
     ) -> Result<(), Error> {
-        require_admin_multisig(&env, &approver_a, &approver_b)?;
+        require_config_admin_multisig(&env, &approver_a, &approver_b)?;
         Storage::require_no_reentrancy(&env)?;
+        ensure!(
+            Storage::get_fee_wallet(&env).is_none(),
+            Error::FeeWalletAlreadySet
+        );
         Storage::set_fee_wallet(&env, &new_fee_wallet);
         Events::emit_fee_wallet_updated(&env, new_fee_wallet);
         Ok(())
@@ -747,7 +800,7 @@ impl PromptHashTrait for PromptHashContract {
         approver_a: Address,
         approver_b: Address,
     ) -> Result<(), Error> {
-        require_admin_multisig(&env, &approver_a, &approver_b)?;
+        require_config_admin_multisig(&env, &approver_a, &approver_b)?;
         Storage::require_no_reentrancy(&env)?;
         Storage::set_pause_status(&env, paused);
         Events::emit_contract_paused_state_changed(&env, paused);
@@ -756,6 +809,55 @@ impl PromptHashTrait for PromptHashContract {
 
     fn is_paused(env: Env) -> bool {
         Storage::is_paused(&env)
+    }
+
+    // ─── #195: Emergency pause with owner override ────────────────────────
+
+    #[only_owner]
+    fn emergency_pause(env: Env) -> Result<(), Error> {
+        ensure(!Storage::is_paused(&env), Error::EmergencyAlreadyActive)?;
+        Storage::set_pause_status(&env, true);
+        // Clear any pending unpause since we just re-entered emergency pause.
+        Storage::clear_pending_unpause_at(&env);
+        Events::emit_emergency_paused(&env, ownable::get_owner(&env).unwrap());
+        Ok(())
+    }
+
+    #[only_owner]
+    fn propose_unpause(env: Env) -> Result<(), Error> {
+        ensure(Storage::is_paused(&env), Error::ContractIsPaused)?;
+        let now = env.ledger().timestamp();
+        Storage::set_pending_unpause_at(&env, now);
+        Events::emit_unpause_proposed(&env, now);
+        Ok(())
+    }
+
+    #[only_owner]
+    fn confirm_unpause(env: Env) -> Result<(), Error> {
+        ensure(Storage::is_paused(&env), Error::ContractIsPaused)?;
+        let proposed_at = Storage::get_pending_unpause_at(&env)
+            .ok_or(Error::UnpauseNotProposed)?;
+        let now = env.ledger().timestamp();
+        ensure(
+            now >= proposed_at.saturating_add(EMERGENCY_UNPAUSE_COOLDOWN_SECS),
+            Error::UnpauseCooldownNotElapsed,
+        )?;
+        Storage::set_pause_status(&env, false);
+        Storage::clear_pending_unpause_at(&env);
+        Events::emit_unpause_confirmed(&env, now);
+        Ok(())
+    }
+
+    #[only_owner]
+    fn cancel_unpause(env: Env) -> Result<(), Error> {
+        ensure(Storage::get_pending_unpause_at(&env).is_some(), Error::UnpauseNotProposed)?;
+        Storage::clear_pending_unpause_at(&env);
+        Events::emit_unpause_cancelled(&env);
+        Ok(())
+    }
+
+    fn get_pending_unpause(env: Env) -> Option<u64> {
+        Storage::get_pending_unpause_at(&env)
     }
 
     #[only_owner]
@@ -852,7 +954,7 @@ impl PromptHashTrait for PromptHashContract {
         approver_a: Address,
         approver_b: Address,
     ) -> Result<(), Error> {
-        require_admin_multisig(&env, &approver_a, &approver_b)?;
+        require_upgrade_admin_multisig(&env, &approver_a, &approver_b)?;
         ensure(!Storage::is_paused(&env), Error::ContractIsPaused)?;
         // (1) Reject an invalid implementation: a zero hash is never a deployable
         //     WASM, and re-proposing the currently-deployed bytecode is a no-op.
@@ -871,7 +973,7 @@ impl PromptHashTrait for PromptHashContract {
     }
 
     fn confirm_upgrade(env: Env, approver_a: Address, approver_b: Address) -> Result<(), Error> {
-        require_admin_multisig(&env, &approver_a, &approver_b)?;
+        require_upgrade_admin_multisig(&env, &approver_a, &approver_b)?;
         let pending = Storage::get_pending_upgrade(&env).ok_or(Error::UpgradeNotProposed)?;
         // (timelock) Enforce the cooldown before executing the upgrade.
         let proposed_at =
@@ -902,7 +1004,7 @@ impl PromptHashTrait for PromptHashContract {
     }
 
     fn cancel_upgrade(env: Env, approver_a: Address, approver_b: Address) -> Result<(), Error> {
-        require_admin_multisig(&env, &approver_a, &approver_b)?;
+        require_upgrade_admin_multisig(&env, &approver_a, &approver_b)?;
         let pending = Storage::get_pending_upgrade(&env).ok_or(Error::UpgradeNotProposed)?;
         Storage::clear_pending_upgrade(&env);
         Storage::clear_upgrade_proposer(&env);
@@ -2188,6 +2290,13 @@ fn validate_prompt_fields(
     Ok(())
 }
 
+/// Validates a field is non-empty and fits within `max_len`.
+///
+/// `soroban_sdk::String::len()` counts **UTF-8 bytes**, not Unicode
+/// characters. Multi-byte input (e.g. emoji) therefore consumes more than one
+/// unit of the limit. The frontend mirrors this exact byte-counting in
+/// `src/lib/validation/listing.ts` (`utf8Length`) so the client never submits
+/// a field the contract will reject (#506).
 fn validate_len(value: &String, max_len: u32, error: Error) -> Result<(), Error> {
     ensure(!value.is_empty() && value.len() <= max_len, error)
 }
@@ -2200,19 +2309,72 @@ fn ensure(condition: bool, error: Error) -> Result<(), Error> {
     }
 }
 
-fn require_admin_multisig(
+fn require_config_admin_multisig(
     env: &Env,
     approver_a: &Address,
     approver_b: &Address,
 ) -> Result<(), Error> {
+    require_role_multisig(env, approver_a, approver_b, Storage::is_config_admin_signer)
+}
+
+fn require_upgrade_admin_multisig(
+    env: &Env,
+    approver_a: &Address,
+    approver_b: &Address,
+) -> Result<(), Error> {
+    require_role_multisig(
+        env,
+        approver_a,
+        approver_b,
+        Storage::is_upgrade_admin_signer,
+    )
+}
+
+fn require_role_multisig(
+    env: &Env,
+    approver_a: &Address,
+    approver_b: &Address,
+    is_signer: fn(&Env, &Address) -> bool,
+) -> Result<(), Error> {
     ensure(approver_a != approver_b, Error::Unauthorized)?;
     ensure(
-        Storage::is_admin_signer(env, approver_a) && Storage::is_admin_signer(env, approver_b),
+        is_signer(env, approver_a) && is_signer(env, approver_b),
         Error::Unauthorized,
     )?;
     approver_a.require_auth();
     approver_b.require_auth();
     Ok(())
+}
+
+fn validate_admin_roles(
+    config_admin: &Address,
+    config_admin_two: &Address,
+    config_admin_three: &Address,
+    upgrade_admin: &Address,
+    upgrade_admin_two: &Address,
+    upgrade_admin_three: &Address,
+) -> Result<(), Error> {
+    ensure(
+        config_admin != config_admin_two
+            && config_admin != config_admin_three
+            && config_admin_two != config_admin_three
+            && upgrade_admin != upgrade_admin_two
+            && upgrade_admin != upgrade_admin_three
+            && upgrade_admin_two != upgrade_admin_three,
+        Error::Unauthorized,
+    )?;
+    ensure(
+        config_admin != upgrade_admin
+            && config_admin != upgrade_admin_two
+            && config_admin != upgrade_admin_three
+            && config_admin_two != upgrade_admin
+            && config_admin_two != upgrade_admin_two
+            && config_admin_two != upgrade_admin_three
+            && config_admin_three != upgrade_admin
+            && config_admin_three != upgrade_admin_two
+            && config_admin_three != upgrade_admin_three,
+        Error::Unauthorized,
+    )
 }
 
 fn validate_classification(env: &Env, classification: &String) -> Result<(), Error> {

@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches: ["main"]
@@ -16,15 +15,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Enable Corepack
-        run: corepack enable
-
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "yarn"
+
+      - name: Install Yarn
+        run: npm install -g @yarnpkg/cli-dist@4.9.2
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -37,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Enable Corepack
         run: corepack enable
@@ -59,16 +56,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Enable Corepack
         run: corepack enable
 
+  a11y:
+    name: Accessibility Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "yarn"
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -88,7 +90,7 @@ jobs:
     needs: [lint, typecheck]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Enable Corepack
         run: corepack enable
@@ -98,9 +100,11 @@ jobs:
         with:
           node-version: "22"
           cache: "yarn"
+      - name: Install Yarn
+        run: npm install -g @yarnpkg/cli-dist@4.9.2
 
       - name: Install dependencies
         run: yarn install --immutable
 
-      - name: Build Frontend
-        run: yarn build
+      - name: Run Accessibility Audit
+        run: yarn a11y

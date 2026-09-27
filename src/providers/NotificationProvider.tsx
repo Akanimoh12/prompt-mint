@@ -19,6 +19,7 @@ import {
   type NotificationVariant,
 } from "@/lib/notifications/store";
 import type { NotificationTransport } from "@/lib/notifications/transport";
+import { deliverPushOrFallback } from "@/lib/notifications/push";
 
 // Backwards-compatible aliases (existing imports depend on these names).
 export type NotificationType = NotificationVariant;
@@ -30,6 +31,13 @@ export interface NotifyEventInput {
   title?: string;
   /** Idempotency key so repeated transport deliveries do not duplicate. */
   dedupeKey?: string;
+  /** Associated prompt ID for grouping (#747). */
+  promptId?: string;
+  /** Associated prompt title for group headers (#747). */
+  promptTitle?: string;
+  /** Importance score / tier overrides (#746). */
+  importance?: "critical" | "high" | "medium" | "low";
+  importanceScore?: number;
 }
 
 export interface NotificationContextType {
@@ -156,7 +164,16 @@ export const NotificationProvider: React.FC<{
   );
 
   const notifyEvent = useCallback(
-    ({ category, message, title, dedupeKey }: NotifyEventInput) => {
+    ({
+      category,
+      message,
+      title,
+      dedupeKey,
+      promptId,
+      promptTitle,
+      importance,
+      importanceScore,
+    }: NotifyEventInput) => {
       addRecord(
         {
           id: newId(),
@@ -168,6 +185,10 @@ export const NotificationProvider: React.FC<{
           isVisible: true,
           category,
           dedupeKey,
+          promptId,
+          promptTitle,
+          importance,
+          importanceScore,
         },
         true,
       );
@@ -181,14 +202,20 @@ export const NotificationProvider: React.FC<{
   useEffect(() => {
     if (!transport) return;
     return transport.subscribe((incoming) => {
-      addRecordRef.current(
-        {
-          ...incoming,
-          isRead: incoming.isRead ?? false,
-          isVisible: false,
+      const record: NotificationRecord = {
+        ...incoming,
+        isRead: incoming.isRead ?? false,
+        isVisible: false,
+      };
+      addRecordRef.current(record, false);
+      // Push is best-effort (#751): when the browser cannot show one, the
+      // record is surfaced in-app instead so the notification is never lost.
+      // The store dedupes by id, so this cannot create a second entry.
+      void deliverPushOrFallback(record, {
+        onInAppFallback: (fallbackRecord) => {
+          addRecordRef.current(fallbackRecord, true);
         },
-        false,
-      );
+      });
     });
   }, [transport]);
 

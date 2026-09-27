@@ -14,6 +14,8 @@ import {
   UpdateReviewChecklist,
   AddTags,
   RemoveTags,
+  GetMarketplaceIndexStatus,
+  GetCreatorStorageQuota,
 } from "../controllers/controllers";
 import {
   GetBuyerTransactionHistory,
@@ -53,6 +55,10 @@ promptRouter.route("/").post(checkDuplicateContentHash, CreatePrompt);
 
 promptRouter.route("/").get(GetPrompts);
 
+// External indexer health/visibility — registered before `/:id` so it is not
+// shadowed by the generic single-prompt lookup below.
+promptRouter.get("/index/status", GetMarketplaceIndexStatus);
+
 promptRouter.get("/buyer/:walletAddress/owned", GetOwnedPrompts);
 promptRouter.get("/buyer/:walletAddress/transactions", GetBuyerTransactionHistory);
 promptRouter.get("/buyer/:walletAddress/saved", GetSavedPrompts);
@@ -60,6 +66,7 @@ promptRouter.get("/creator/:walletAddress/transactions", GetCreatorTransactionHi
 promptRouter.post("/buyer/save", SavePrompt);
 promptRouter.post("/buyer/unsave", UnsavePrompt);
 promptRouter.get("/creator/:walletAddress/drafts", GetDraftPrompts);
+promptRouter.get("/creator/:walletAddress/quota", GetCreatorStorageQuota);
 promptRouter.post("/:id/submit-review", SubmitForReview);
 promptRouter.patch("/:id/review-checklist", UpdateReviewChecklist);
 promptRouter.post("/:id/tags", AddTags);
