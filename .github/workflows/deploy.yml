@@ -25,6 +25,7 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
+          node-version: '18.x'
           node-version: '22'
           cache: 'yarn'
 
@@ -36,7 +37,7 @@ jobs:
         run: yarn install --immutable
 
       - name: Build frontend
-        run: yarn build
+        run: yarn run build
         env:
           CI: true
 
@@ -63,6 +64,13 @@ jobs:
           retention-days: 30
 
       - name: Deploy to Vercel
+        uses: vercel/actions/cli@main
+        with:
+          args: deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
+        if: |
+          secrets.VERCEL_TOKEN != '' &&
+          secrets.VERCEL_ORG_ID != '' &&
+          secrets.VERCEL_PROJECT_ID != ''
         uses: amondnet/vercel-action@v42
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -354,12 +362,20 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
+          node-version: '18.x'
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --immutable
           node-version: '22'
           cache: 'yarn'
           cache: yarn
 
       - name: Install dependencies
         run: yarn install --immutable
+
+      - name: Install CycloneDX tooling
+        run: yarn global add @cyclonedx/cyclonedx-npm
 
       - name: Generate frontend SBOM (CycloneDX)
         run: |
