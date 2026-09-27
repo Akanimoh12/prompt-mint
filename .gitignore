@@ -70,6 +70,11 @@ deployments/local.json
 packages/*
 !packages/.gitkeep
 !src/contracts/util.ts
+# Hand-written server SDKs live under packages/ too — keep their sources tracked
+!packages/server-sdk/
+!packages/server-sdk-python/
+!packages/server-sdk-go/
+!packages/server-sdk-rust/
 .omx/
 
 # Load-test secrets and generated results

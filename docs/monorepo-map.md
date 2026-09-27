@@ -21,6 +21,7 @@ flowchart TB
   subgraph BINDINGS["Contract clients"]
     packages["packages/*<br/>generated TS bindings"]
     sdk["packages/sdk<br/>@prompthash/sdk"]
+    serversdk["packages/server-sdk*<br/>TypeScript · Python · Go · Rust server SDKs"]
     srccontracts["src/contracts<br/>generated wrappers"]
   end
 
@@ -56,7 +57,7 @@ flowchart TB
   gh -- "sign · attest · release" --> scripts
 
   class contracts contract
-  class packages,sdk,srccontracts contract
+  class packages,sdk,serversdk,srccontracts contract
   class ui web
   class lib shared
   class api,server backend
@@ -76,7 +77,7 @@ Solid arrows are code imports or build outputs, and point from the consumer towa
 | `contracts/`        | Contract         | Listing, purchase, fee routing, access rights. No off-chain dependencies                                  | `contracts.yml`, `contract-gas-benchmarks.yml`, `soroban-schema-validation.yml` |
 | `Cargo.toml`        | Contract         | Rust workspace, release profile                                                                           | `contracts.yml`                                                                 |
 | `environments.toml` | Contract         | Scaffold networks and constructor args                                                                    | `contracts.yml`                                                                 |
-| `packages/`         | Contract clients | Generated bindings (`packages/*`, git-ignored) and the hand-written `packages/sdk`                        | none                                                                            |
+| `packages/`         | Contract clients | Generated bindings (`packages/*`, git-ignored), the browser `packages/sdk`, and the server SDKs in `packages/server-sdk`, `packages/server-sdk-python`, `packages/server-sdk-go`, `packages/server-sdk-rust` | `ci.yml` (`packages/server-sdk` tests run under `yarn test:frontend`); Python/Go/Rust SDKs have package-local test suites |
 | `src/contracts/`    | Contract clients | Generated wrappers that the frontend imports. Regenerate, don't hand-edit                                 | `frontend.yml`                                                                  |
 | `src/`              | Frontend         | Pages, components, hooks, providers, i18n                                                                 | `frontend.yml`, `performance-budgets.yml`                                       |
 | `public/`           | Frontend         | Static assets, PWA manifest                                                                               | `frontend.yml`                                                                  |
@@ -85,7 +86,7 @@ Solid arrows are code imports or build outputs, and point from the consumer towa
 | `server/`           | Backend          | Express server, MongoDB models, migrations, backups                                                       | `backend.yml`                                                                   |
 | `postman/`          | Backend          | API collections                                                                                           | none                                                                            |
 | `.github/`          | Release & Ops    | CI, deploy, signing, provenance, rollback                                                                 | `ci.yml` (provenance badge test), `hygiene.yml`                                 |
-| `scripts/`          | Release & Ops    | Deploy, upgrade, bootstrap, deploy manifest, security tooling                                             | `ci.yml` (script unit tests)                                                    |
+| `scripts/`          | Release & Ops    | Deploy, upgrade (with `--dry-run`), chain-status, creator-catalog-export, bootstrap, deploy manifest, security tooling | `ci.yml` (script unit tests)                                                    |
 | `deployments/`      | Release & Ops    | Committed deploy manifests (hashes and addresses)                                                         | `ci.yml` (schema-validates every `*.json`)                                      |
 | `load-tests/`       | Release & Ops    | k6 load and soak tests                                                                                    | none                                                                            |
 | `docs/`             | Docs             | Architecture, operations, security, onboarding                                                            | `ci.yml` (doc tests), `hygiene.yml`                                             |

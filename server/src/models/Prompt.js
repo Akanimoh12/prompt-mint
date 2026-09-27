@@ -6,19 +6,26 @@ const promptSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      // Mirrors the on-chain MAX_IMAGE_URL_LEN (512 bytes) so a listing that
+      // passes the API validator can never be rejected by create_prompt (#410).
+      maxLength: 512,
     },
     title: {
       type: String,
       required: true,
       trim: true,
       minLength: 3,
-      maxLength: 100,
+      // Mirrors the on-chain MAX_TITLE_LEN (120 bytes) (#410).
+      maxLength: 120,
     },
     content: {
       type: String,
       required: true,
       trim: true,
       minLength: 10,
+      // Pre-encryption prompt text; bounded so the per-creator storage quota
+      // (Issue #198) cannot be bypassed with a single oversized listing.
+      maxLength: 50_000,
     },
     rating: {
       type: Number,
@@ -165,6 +172,18 @@ promptSchema.index({ salesCount: -1, _id: -1 });
 promptSchema.index({ rating: -1, _id: -1 });
 promptSchema.index({ listingStatus: 1, isActive: 1, price: 1, _id: 1 });
 promptSchema.index({ listingStatus: 1, isActive: 1, salesCount: -1, _id: -1 });
+
+// Marketplace query patterns — compound indexes for common filters + sort
+promptSchema.index({ listingStatus: 1, isActive: 1, createdAt: -1 });
+promptSchema.index({ listingStatus: 1, isActive: 1, category: 1, createdAt: -1 });
+promptSchema.index({ listingStatus: 1, isActive: 1, tags: 1, createdAt: -1 });
+promptSchema.index({ listingStatus: 1, isActive: 1, price: 1, createdAt: -1 });
+promptSchema.index({ listingStatus: 1, isActive: 1, rating: 1, createdAt: -1 });
+promptSchema.index({ owner: 1, createdAt: -1 });
+promptSchema.index({ owner: 1, listingStatus: 1, updatedAt: -1 });
+promptSchema.index({ savedPrompts: 1, createdAt: -1 });
+promptSchema.index({ owner: 1, previewCount: -1 });
+promptSchema.index({ onChainId: 1, isActive: 1 });
 
 // Check if the model exists before creating it
 const Prompt = mongoose.models.Prompt || mongoose.model("Prompt", promptSchema);
