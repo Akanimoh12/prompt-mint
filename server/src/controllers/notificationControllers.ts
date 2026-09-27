@@ -168,3 +168,47 @@ export const ExportNotifications = asyncRoute(async (req: Request, res: Response
     ),
   );
 });
+
+export const UnsubscribeNotification = asyncRoute(async (req: Request, res: Response) => {
+  await connectDb();
+  const token = String(req.query.token || req.body?.token || "").trim();
+  if (!token) {
+    throw new AppError("Unsubscribe token is required.", 400, "MISSING_TOKEN");
+  }
+
+  const { verifyUnsubscribeToken } = await import("../services/unsubscribeToken.js");
+  const verification = verifyUnsubscribeToken(token);
+  if (!verification.valid || !verification.wallet) {
+    throw new AppError(`Invalid or expired unsubscribe token: ${verification.reason}`, 400, "INVALID_TOKEN");
+  }
+
+  const walletAddress = verification.wallet.toLowerCase();
+  const event = verification.event;
+
+  const update: Record<string, boolean> = {};
+  if (event) {
+    update[`notificationPreferences.${event}`] = false;
+  } else {
+    update["notificationPreferences.PromptPurchased"] = false;
+    update["notificationPreferences.PromptUpdated"] = false;
+  }
+
+  const user = await User.findOneAndUpdate(
+    { walletAddress },
+    { $set: update },
+    { new: true }
+  );
+
+  if (!user) {
+    throw new AppError("User not found for this wallet address.", 404, "NOT_FOUND");
+  }
+
+  res.json({
+    success: true,
+    message: event
+      ? `Successfully unsubscribed from ${event} notifications.`
+      : "Successfully unsubscribed from all email notifications.",
+    walletAddress,
+    event: event ?? "all",
+  });
+});

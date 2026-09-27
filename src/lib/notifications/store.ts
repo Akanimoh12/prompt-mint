@@ -39,6 +39,14 @@ export interface NotificationRecord {
    * from repeated transport deliveries).
    */
   dedupeKey?: string;
+  /** Associated prompt identifier for grouping (#747). */
+  promptId?: string;
+  /** Associated prompt title for group headers (#747). */
+  promptTitle?: string;
+  /** Importance classification (#746). */
+  importance?: "critical" | "high" | "medium" | "low";
+  /** Numerical score 0-100 (#746). */
+  importanceScore?: number;
 }
 
 export type NotificationAction =
@@ -92,6 +100,17 @@ export function notificationsReducer(
       );
     case "MARK_ALL_READ":
       return state.map((n) => (n.isRead ? n : { ...n, isRead: true }));
+    case "TRACK_CLICK":
+      return state.map((n) =>
+        n.id === action.id
+          ? {
+              ...n,
+              isRead: true,
+              isClicked: true,
+              clickedAt: action.timestamp ?? Date.now(),
+            }
+          : n,
+      );
     case "CLEAR":
       return [];
     case "HYDRATE":
@@ -103,4 +122,41 @@ export function notificationsReducer(
 
 export function selectUnreadCount(items: NotificationRecord[]): number {
   return items.reduce((count, n) => (n.isRead ? count : count + 1), 0);
+}
+
+export interface NotificationClickEvent {
+  notificationId: string;
+  link?: string;
+  category?: NotificationCategory;
+  clickedAt: number;
+}
+
+export type NotificationClickTracker = (event: NotificationClickEvent) => void;
+
+let globalClickTracker: NotificationClickTracker | null = null;
+
+export function setNotificationClickTracker(
+  tracker: NotificationClickTracker | null,
+): void {
+  globalClickTracker = tracker;
+}
+
+export function trackNotificationClick(
+  record: NotificationRecord,
+  customTracker?: NotificationClickTracker,
+): NotificationClickEvent {
+  const event: NotificationClickEvent = {
+    notificationId: record.id,
+    link: record.link,
+    category: record.category,
+    clickedAt: Date.now(),
+  };
+
+  if (customTracker) {
+    customTracker(event);
+  } else if (globalClickTracker) {
+    globalClickTracker(event);
+  }
+
+  return event;
 }
