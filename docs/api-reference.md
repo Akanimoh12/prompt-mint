@@ -42,6 +42,8 @@ Express JSON bodies are limited to `300kb`; serverless bodies are limited to `10
 
 ## Error codes
 
+Full per-code table — including retry guidance, the Express `AppError` codes, appeal and API-key errors, and the exact envelope shapes — is in the [SDK error-code reference card](./sdk-error-codes.md). That card is verified against `src/lib/api/errorCodes.ts` by `src/test/docs/sdkErrorCodes.test.ts`.
+
 | HTTP | Code/condition | Meaning |
 |---:|---|---|
 | 400 | `MISSING_FIELDS`, `INVALID_INPUT`, `UNSUPPORTED_VERSION` | Invalid shape, missing data, or unsupported API version |
@@ -151,8 +153,12 @@ The canonical unlock URLs are `/api/auth/challenge` and `/api/prompts/unlock`; o
 | POST | `/api/webhooks/test` | Owner | none -> delivery ID |
 | GET | `/api/webhooks/deliveries` | Owner | none -> `WebhookDelivery[]` |
 | GET | `/api/webhooks/dead-letters` | Owner | none -> dead letters |
-| POST | `/api/webhooks/dead-letters/{id}/replay` | Owner | path ID -> `{success}` |
+| POST | `/api/webhooks/dead-letters/{id}/replay` | Admin | path ID, optional `{refreshTimestamp}` -> `{success,replayedAt}` |
+| GET | `/api/webhooks/replay/events` | Public | none -> event catalog |
+| GET | `/api/webhooks/replay/queue` | Owner | `walletAddress` query -> replay queue with per-row assessments |
+| POST | `/api/webhooks/replay/preview` | Public | `{event,data?}` -> envelope preview, nothing delivered |
 | GET | `/api/notifications` | User | none -> `Notification[]` |
+| GET | `/api/notifications/export` | User | `walletAddress` required, `format=csv\|json` (default `json`) -> attachment of the full notification history |
 | PATCH | `/api/notifications/{id}/read` | User | path ID -> `{success}` |
 | GET/PUT | `/api/prompt-order` | Wallet | none / `PromptOrder` -> `PromptOrder` |
 | GET/POST | `/api-keys` | Key owner | owner query / key body -> key summaries or plaintext once |
@@ -184,6 +190,10 @@ curl -sS "$BASE_URL/api/prompts" -H 'X-Api-Key: pm_<prefix>_<secret>'
 # Buyer library mutation
 curl -sS -X POST "$BASE_URL/api/prompts/buyer/save" -H 'Content-Type: application/json' \
   -d '{"walletAddress":"G...","promptId":"6650f1abc"}'
+
+# Download a wallet's full notification history as a CSV attachment
+curl -sS "$BASE_URL/api/notifications/export?walletAddress=G...&format=csv" \
+  -H 'Accept: text/csv' -o notifications.csv
 ```
 
 For every request/response property, enum, and reusable schema, use the OpenAPI contract above. Wallet challenge/unlock and buyer mutation schemas are also documented in [`api-request-schemas.md`](./api-request-schemas.md).
@@ -220,3 +230,8 @@ Analytics accepts only known taxonomy events, rejects raw wallet addresses,
 and has a 20kb body limit. Image validation accepts HTTP(S) URLs only and
 allows JPEG, PNG, WebP, and GIF files up to 5MB. Moderator actions accept 1-50
 actions and may return `207` when some actions fail.
+
+For external developers integrating against these endpoints, see the
+[Public API Survival Guide](./public-api-survival-guide.md) for rate-limit
+handling, error recovery patterns, unlock flow gotchas, and the testnet
+checklist.
