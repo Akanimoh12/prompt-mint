@@ -45,6 +45,14 @@ struct PromptPurchased {
     pub referrer_amount: i128,
 }
 
+#[contractevent]
+struct AccessRevoked {
+    #[topic]
+    pub prompt_id: u128,
+    pub buyer: Address,
+    pub revoker: Address,
+}
+
 // ─── #274: Referral tracking events ──────────────────────────────────────
 #[contractevent]
 struct ReferralCodeRegistered {
@@ -227,6 +235,15 @@ impl Events {
             creator_amount,
             platform_amount,
             referrer_amount,
+        }
+        .publish(env);
+    }
+
+    pub fn emit_access_revoked(env: &Env, prompt_id: u128, buyer: Address, revoker: Address) {
+        AccessRevoked {
+            prompt_id,
+            buyer,
+            revoker,
         }
         .publish(env);
     }
@@ -547,11 +564,47 @@ struct UpgradeCancelled {
     pub cancelled_wasm_hash: soroban_sdk::BytesN<32>,
 }
 
+// ─── #195: Emergency Pause Events ────────────────────────────────────
+
+#[contractevent]
+struct EmergencyPaused {
+    pub paused_by: Address,
+}
+
+#[contractevent]
+struct UnpauseProposed {
+    pub proposed_at: u64,
+}
+
+#[contractevent]
+struct UnpauseConfirmed {
+    pub confirmed_at: u64,
+}
+
+#[contractevent]
+struct UnpauseCancelled {}
+
 // NB: `Events` is already declared earlier in this file; this is an additional
 // `impl Events` block (multiple impl blocks for one type are valid Rust). The
 // duplicate `pub struct Events;` that previously sat here has been removed to
 // keep the crate compiling.
 impl Events {
+    pub fn emit_emergency_paused(env: &Env, paused_by: Address) {
+        EmergencyPaused { paused_by }.publish(env);
+    }
+
+    pub fn emit_unpause_proposed(env: &Env, proposed_at: u64) {
+        UnpauseProposed { proposed_at }.publish(env);
+    }
+
+    pub fn emit_unpause_confirmed(env: &Env, confirmed_at: u64) {
+        UnpauseConfirmed { confirmed_at }.publish(env);
+    }
+
+    pub fn emit_unpause_cancelled(env: &Env) {
+        UnpauseCancelled {}.publish(env);
+    }
+
     pub fn emit_promotion_created(
         env: &Env,
         prompt_id: u128,
