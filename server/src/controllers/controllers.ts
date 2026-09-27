@@ -9,6 +9,8 @@ import { openai } from "@ai-sdk/openai";
 import {
   validateListingMetadata,
 } from "../services/listingValidation";
+import { cacheGet, cacheSet, cacheDel, cacheDelPattern, CACHE_KEYS } from "../services/cacheService";
+import { getCircuitBreaker, CircuitBreakerOpenError } from "../services/circuitBreaker";
 import { cacheGet, cacheSet, CACHE_KEYS, PROMPT_METADATA_TTL_SECONDS, invalidatePromptMetadata } from "../services/cacheService";
 import { searchMarketplace, parseMarketplaceQuery } from "../services/marketplaceIndexService";
 import { getCircuitBreaker } from "../services/circuitBreaker";
@@ -32,6 +34,8 @@ export const ImproveProxy = asyncRoute(async (req, res) => {
 
   console.log("Improve prompt request: ", promptText);
 
+  try {
+    const response = await improveProxyBreaker.execute(() =>
   let response: Response;
   try {
     response = await improveProxyBreaker.execute(() =>
@@ -55,17 +59,26 @@ export const ImproveProxy = asyncRoute(async (req, res) => {
     throw err;
   }
 
-  const responseData = await response.json().catch(() => {});
-  const responseText = await response.text().catch(() => {});
+    const responseData = await response.json().catch(() => {});
+    const responseText = await response.text().catch(() => {});
 
-  console.log("Improve prompt response status:", response.status);
-  console.log("Improve prompt response data:", responseData || responseText);
+    console.log("Improve prompt response status:", response.status);
+    console.log("Improve prompt response data:", responseData || responseText);
 
-  if (!response.ok) {
-    throw new AppError("API Error", response.status);
+    if (!response.ok) {
+      throw new AppError("API Error", response.status);
+    }
+
+    res.json(responseData);
+  } catch (error) {
+    if (error instanceof CircuitBreakerOpenError) {
+      throw new AppError("Service Unavailable", 503, "CIRCUIT_OPEN");
+    }
+    if (error instanceof Error && (error.name === "AbortError" || error.message.includes("aborted"))) {
+      throw new AppError("Gateway Timeout", 504, "GATEWAY_TIMEOUT");
+    }
+    throw error;
   }
-
-  res.json(responseData);
 });
 
 /* PROMPTS CONTROLLERS */
