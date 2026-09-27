@@ -132,8 +132,12 @@ async function json<T>(input: string, init?: RequestInit): Promise<T> {
     let message = text || `Request failed with status ${response.status}.`;
     let code: string | undefined;
     try {
-      const parsed = JSON.parse(text) as { message?: string; code?: string };
-      if (parsed.message) message = parsed.message;
+      const parsed = JSON.parse(text) as { error?: string; message?: string; code?: string };
+      // The Express error handler answers with `{ error, code }`, so `error` is
+      // the field to read; `message` is kept as a fallback for handlers that
+      // use it.
+      const detail = parsed.error || parsed.message;
+      if (detail) message = detail;
       code = parsed.code;
     } catch {
       // Non-JSON error body (proxy error page, empty response) — keep the raw text.

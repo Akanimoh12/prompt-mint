@@ -216,7 +216,7 @@ describe("WebhookReplayConsole", () => {
     routeFetch({
       "/api/webhooks/replay/events": () => json(EVENTS),
       "/api/webhooks/replay/queue": () =>
-        json({ message: "No webhook registered for this wallet.", code: "NOT_FOUND" }, 404),
+        json({ error: "No webhook registered for this wallet.", code: "NOT_FOUND" }, 404),
     });
 
     renderWithProviders(<WebhookReplayConsolePage />, { wallet: { address: WALLET } });

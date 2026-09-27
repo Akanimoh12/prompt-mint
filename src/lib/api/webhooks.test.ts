@@ -115,8 +115,9 @@ describe("webhook replay client", () => {
   });
 
   it("surfaces the server message and error code so the UI can branch on NOT_FOUND", async () => {
+    // Shape produced by the Express error handler: `{ error, code }`.
     vi.mocked(fetch).mockResolvedValue(
-      jsonResponse({ message: "No webhook registered for this wallet.", code: "NOT_FOUND" }, 404),
+      jsonResponse({ error: "No webhook registered for this wallet.", code: "NOT_FOUND" }, 404),
     );
 
     const error = await getWebhookReplayQueue("GABC").catch((err) => err);
@@ -125,6 +126,16 @@ describe("webhook replay client", () => {
     expect(error.message).toBe("No webhook registered for this wallet.");
     expect(error.code).toBe("NOT_FOUND");
     expect(error.status).toBe(404);
+  });
+
+  it("also reads a `message` field from handlers that use one", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({ message: "refreshTimestamp must be a boolean", code: "INVALID_INPUT" }, 400),
+    );
+
+    const error = await previewWebhookEvent({ event: "PromptCreated" }).catch((err) => err);
+
+    expect(error.message).toBe("refreshTimestamp must be a boolean");
   });
 
   it("keeps the raw body when the error response is not JSON", async () => {

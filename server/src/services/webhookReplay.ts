@@ -248,7 +248,7 @@ export function assessReplay(
     event,
     originalTimestamp,
     ageSeconds,
-    fingerprint: fingerprintPayload(deadLetter.payload),
+    fingerprint: fingerprintPayload(payload),
     replayable: !resolved,
     stale: warnings.includes("stale_event"),
     warnings,

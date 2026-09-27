@@ -185,6 +185,15 @@ describe("assessReplay", () => {
     );
   });
 
+  it("reports a dead letter whose stored payload is missing instead of throwing", () => {
+    // One malformed row must not take down the whole queue read.
+    const assessment = assessReplay(deadLetterDoc({ payload: undefined }), { now: NOW });
+
+    expect(assessment.warnings).toContain("unparseable_timestamp");
+    expect(assessment.ageSeconds).toBeNull();
+    expect(assessment.fingerprint).toBe(fingerprintPayload({}));
+  });
+
   it("keeps the fingerprint stable so a verbatim replay can be proven byte-identical", () => {
     const doc = deadLetterDoc();
 
