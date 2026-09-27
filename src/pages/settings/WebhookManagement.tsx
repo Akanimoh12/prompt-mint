@@ -5,6 +5,7 @@ import WebhookPerformanceDashboard from "@/components/webhooks/WebhookPerformanc
 import WebhookBacklogViewer from "@/components/webhooks/WebhookBacklogViewer";
 import WebhookTopicSelector from "@/components/webhooks/WebhookTopicSelector";
 import WebhookSecretRotation from "@/components/webhooks/WebhookSecretRotation";
+import WebhookSubscriptions from "@/components/webhooks/WebhookSubscriptions";
 
 export default function WebhookManagement() {
   const [activeTab, setActiveTab] = useState("performance");
@@ -19,11 +20,12 @@ export default function WebhookManagement() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="backlog">Backlog</TabsTrigger>
           <TabsTrigger value="topics">Topics</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
         </TabsList>
 
         <TabsContent value="performance" className="space-y-4">
@@ -40,6 +42,10 @@ export default function WebhookManagement() {
 
         <TabsContent value="security" className="space-y-4">
           <WebhookSecretRotation />
+        </TabsContent>
+
+        <TabsContent value="subscriptions" className="space-y-4">
+          <WebhookSubscriptions />
         </TabsContent>
       </Tabs>
     </div>
