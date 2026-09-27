@@ -35,6 +35,11 @@ import { unlockBundleContent, type UnlockedBundleItem } from "@/lib/prompts/unlo
 import { copyToClipboard } from "@/lib/clipboard/secureClipboard";
 import { useNetworkState } from "@/hooks/useNetworkState";
 import { detectNetworkMismatch } from "@/lib/wallet/networkDetection";
+import { NotificationContext } from "@/providers/NotificationProvider";
+import {
+  showPurchaseSuccessToast,
+  showPurchaseErrorToast,
+} from "@/lib/notifications/purchaseToast";
 import { shortenAddress } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -135,6 +140,7 @@ export function BundleModal({
   onRefresh,
 }: BundleModalProps) {
   const wallet = useContext(WalletContext);
+  const notificationContext = useContext(NotificationContext);
   const networkState = useNetworkState();
 
   const [status, setStatus] = useState<BuyStatus>("IDLE");
@@ -223,7 +229,7 @@ export function BundleModal({
 
     try {
       setStatus("AWAITING_APPROVAL");
-      await BundleHashClient.buyBundle(
+      const res = await BundleHashClient.buyBundle(
         browserStellarConfig,
         { signTransaction: wallet.signTransaction },
         wallet.address,
@@ -232,10 +238,25 @@ export function BundleModal({
       );
       setStatus("PURCHASED_LOCKED");
       onRefresh?.();
+      showPurchaseSuccessToast(res.txHash, {
+        title: `Purchased Bundle: ${bundle.title}`,
+        network: wallet?.network,
+      });
+      notificationContext?.notifyEvent({
+        category: "purchase",
+        title: "Bundle Purchased",
+        message: `Purchased bundle "${bundle.title}". Tx: ${res.txHash}`,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Purchase failed.";
       setErrorMessage(msg);
       setStatus("ERROR");
+      showPurchaseErrorToast(msg, { title: "Bundle Purchase Failed" });
+      notificationContext?.notifyEvent({
+        category: "purchase",
+        title: "Bundle Purchase Failed",
+        message: msg,
+      });
     }
   };
 
