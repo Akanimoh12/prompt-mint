@@ -101,7 +101,7 @@ export function buildCorsOptions(): CorsOptions {
         return;
       }
 
-      if (isOriginAllowed(origin, allowedOrigins)) {
+      if (isOriginAllowed(origin, getAllowedOrigins())) {
         callback(null, true);
       } else {
         callback(
