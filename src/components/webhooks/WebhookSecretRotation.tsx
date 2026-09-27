@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+const Alert = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
+  <div className={`p-4 rounded-lg border bg-amber-500/10 border-amber-500/20 text-amber-200 ${className}`}>{children}</div>
+);
+const AlertDescription = ({ children }: { children: React.ReactNode }) => (
+  <div className="text-sm mt-1">{children}</div>
+);
 
 interface RotationStep {
   step: number;
