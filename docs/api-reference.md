@@ -158,6 +158,7 @@ The canonical unlock URLs are `/api/auth/challenge` and `/api/prompts/unlock`; o
 | GET | `/api/webhooks/replay/queue` | Owner | `walletAddress` query -> replay queue with per-row assessments |
 | POST | `/api/webhooks/replay/preview` | Public | `{event,data?}` -> envelope preview, nothing delivered |
 | GET | `/api/notifications` | User | none -> `Notification[]` |
+| GET | `/api/notifications/export` | User | `walletAddress` required, `format=csv\|json` (default `json`) -> attachment of the full notification history |
 | PATCH | `/api/notifications/{id}/read` | User | path ID -> `{success}` |
 | GET/PUT | `/api/prompt-order` | Wallet | none / `PromptOrder` -> `PromptOrder` |
 | GET/POST | `/api-keys` | Key owner | owner query / key body -> key summaries or plaintext once |
@@ -189,6 +190,10 @@ curl -sS "$BASE_URL/api/prompts" -H 'X-Api-Key: pm_<prefix>_<secret>'
 # Buyer library mutation
 curl -sS -X POST "$BASE_URL/api/prompts/buyer/save" -H 'Content-Type: application/json' \
   -d '{"walletAddress":"G...","promptId":"6650f1abc"}'
+
+# Download a wallet's full notification history as a CSV attachment
+curl -sS "$BASE_URL/api/notifications/export?walletAddress=G...&format=csv" \
+  -H 'Accept: text/csv' -o notifications.csv
 ```
 
 For every request/response property, enum, and reusable schema, use the OpenAPI contract above. Wallet challenge/unlock and buyer mutation schemas are also documented in [`api-request-schemas.md`](./api-request-schemas.md).

@@ -1904,6 +1904,59 @@ paths:
                 items:
                   $ref: "#/components/schemas/Notification"
 
+  /api/notifications/export:
+    get:
+      operationId: exportNotifications
+      summary: Export the full notification history for a wallet
+      description: >
+        Returns every notification for the wallet (read and unread, newest
+        first) as a downloadable attachment. Use `format=csv` for CSV or the
+        default `format=json` for JSON.
+      tags: [Notifications]
+      parameters:
+        - name: walletAddress
+          in: query
+          required: true
+          description: Wallet address that owns the notification history.
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: false
+          description: Export file format. Defaults to json.
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        "200":
+          description: Notification history attachment (CSV or JSON)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  walletAddress:
+                    type: string
+                  exportedAt:
+                    type: string
+                    format: date-time
+                  count:
+                    type: integer
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/notifications/{id}/read:
     patch:
       operationId: markNotificationRead

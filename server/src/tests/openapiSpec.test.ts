@@ -80,6 +80,7 @@ const EXPECTED_ROUTES: Array<{ path: string; methods: string[] }> = [
   { path: "/api/webhooks/replay/queue", methods: ["get"] },
   { path: "/api/webhooks/replay/preview", methods: ["post"] },
   { path: "/api/notifications", methods: ["get"] },
+  { path: "/api/notifications/export", methods: ["get"] },
   { path: "/api/notifications/{id}/read", methods: ["patch"] },
   { path: "/api/prompt-order", methods: ["get", "put"] },
   { path: "/api-keys", methods: ["get", "post"] },
