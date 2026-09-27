@@ -6,19 +6,26 @@ const promptSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      // Mirrors the on-chain MAX_IMAGE_URL_LEN (512 bytes) so a listing that
+      // passes the API validator can never be rejected by create_prompt (#410).
+      maxLength: 512,
     },
     title: {
       type: String,
       required: true,
       trim: true,
       minLength: 3,
-      maxLength: 100,
+      // Mirrors the on-chain MAX_TITLE_LEN (120 bytes) (#410).
+      maxLength: 120,
     },
     content: {
       type: String,
       required: true,
       trim: true,
       minLength: 10,
+      // Pre-encryption prompt text; bounded so the per-creator storage quota
+      // (Issue #198) cannot be bypassed with a single oversized listing.
+      maxLength: 50_000,
     },
     rating: {
       type: Number,

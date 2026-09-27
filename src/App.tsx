@@ -18,10 +18,12 @@ const ComparePage = lazy(() => import("./pages/compare/page.tsx"));
 const StatusPage = lazy(() => import("./pages/status/page.tsx"));
 const ModerationPage = lazy(() => import("./pages/Moderation.tsx"));
 const ApiKeysPage = lazy(() => import("./pages/settings/ApiKeys.tsx"));
+const WebhookReplayConsolePage = lazy(() => import("./pages/settings/WebhookReplayConsole.tsx"));
 const TransactionHistoryPage = lazy(() => import("./pages/history/page.tsx"));
 const FavoritesPage = lazy(() => import("./pages/favorites/page.tsx"));
 const CollectionDetailPage = lazy(() => import("./pages/collections/page.tsx"));
 const CreatorAnalyticsPage = lazy(() => import("./pages/analytics/page.tsx"));
+const SandboxPage = lazy(() => import("./pages/sandbox/page.tsx"));
 
 /** Fade + slide transition applied to the active route on navigation. */
 const PageTransition = () => {
@@ -133,10 +135,26 @@ function ApplicationShell() {
             }
           />
           <Route
+            path="/sandbox"
+            element={
+              <SuspenseRoute routeName="Developer Sandbox">
+                <SandboxPage />
+              </SuspenseRoute>
+            }
+          />
+          <Route
             path="/settings/api-keys"
             element={
               <SuspenseRoute routeName="API Keys">
                 <ApiKeysPage />
+              </SuspenseRoute>
+            }
+          />
+          <Route
+            path="/settings/webhooks/replay"
+            element={
+              <SuspenseRoute routeName="Webhook Replay Console">
+                <WebhookReplayConsolePage />
               </SuspenseRoute>
             }
           />
