@@ -8,7 +8,9 @@ import {
   createChallengeToken,
 } from "../../src/lib/auth/challenge";
 import { ErrorCode } from "../../src/lib/api/errorCodes";
+import { resetAbuseProtectionState, recordFailedAuthAttempt } from "../../src/lib/auth/abuseProtection";
 import { resetAbuseProtectionState } from "../../src/lib/auth/abuseProtection";
+import { resetReplayProtectionState } from "../../src/lib/observability/replayProtection";
 
 const hasAccessMock = vi.fn();
 const getPromptMock = vi.fn();
@@ -43,6 +45,10 @@ vi.mock("../../src/lib/observability/rateLimiter", () => ({
     remaining: 4,
     reset: 60_000,
   }),
+}));
+
+vi.mock("../../src/lib/observability/redisClient", () => ({
+  getRedisClient: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../../src/lib/observability/metrics", () => ({
@@ -161,6 +167,7 @@ describe("unlock API integrity checks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetAbuseProtectionState();
+    resetReplayProtectionState();
   });
 
   it("returns plaintext when decrypted content matches the stored hash", async () => {
@@ -312,6 +319,31 @@ describe("unlock API integrity checks", () => {
     );
   });
 
+  it("refuses plaintext when ciphertext has been tampered with", async () => {
+    // Inject corrupted ciphertext: decryption succeeds but the resulting content
+    // hashes to something different from what was committed on-chain.
+    const { buyer, promptId, challenge, signedMessage } =
+      await setupUnlockFixture("Original prompt content.");
+
+    // Simulate storage-layer tampering: decryption returns garbage bytes
+    decryptPromptCiphertextMock.mockResolvedValue("�\x00TAMPERED\xFF");
+    // The hash of the tampered output won't match "a".repeat(64) stored on-chain
+    hashPromptPlaintextMock.mockResolvedValue("d".repeat(64));
+
+    const { statusCode, responseData } = await invokeUnlock({
+      token: challenge.token,
+      promptId,
+      address: buyer.publicKey(),
+      signedMessage,
+    });
+
+    expect(statusCode).toBe(200);
+    expect(responseData.plaintext).toBeUndefined();
+    expect(responseData.integrity.status).toBe("failed");
+    expect(responseData.integrity.computedHash).toBe("d".repeat(64));
+    expect(responseData.integrity.storedHash).toBe("a".repeat(64));
+  });
+
   it("does not expose decrypted content in generic error responses", async () => {
     const { buyer, promptId, challenge, signedMessage } =
       await setupUnlockFixture();
@@ -383,6 +415,30 @@ describe("unlock API integrity checks", () => {
     );
   });
 
+  it("rejects replay of a captured wallet signature", async () => {
+    const { buyer, promptId, challenge, signedMessage } =
+      await setupUnlockFixture();
+
+    const first = await invokeUnlock({
+      token: challenge.token,
+      promptId,
+      address: buyer.publicKey(),
+      signedMessage,
+    });
+    expect(first.statusCode).toBe(200);
+
+    const replay = await invokeUnlock({
+      token: challenge.token,
+      promptId,
+      address: buyer.publicKey(),
+      signedMessage,
+    });
+
+    expect(replay.statusCode).toBe(400);
+    expect(replay.responseData.code).toBe(ErrorCode.CHALLENGE_REPLAY);
+    expect(replay.responseData.plaintext).toBeUndefined();
+  });
+
   it("rejects unlock when wallet signature is invalid", async () => {
     const { buyer, promptId, challenge } = await setupUnlockFixture();
     const wrongSigner = Keypair.random();
@@ -422,7 +478,7 @@ describe("unlock API integrity checks", () => {
       expect(responseData.code).toBe(ErrorCode.INVALID_SIGNATURE);
     }
 
-    // 5th failed attempt locks the account and returns 423
+    // Next attempt: account is locked
     const { statusCode, responseData } = await invokeUnlock({
       token: challenge.token,
       promptId,
@@ -514,6 +570,7 @@ describe("unlock challenge message contract", () => {
 describe("unlock API with encryption rotation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetReplayProtectionState();
   });
 
   it("returns v1 plaintext for a buyer who purchased before rotation", async () => {
