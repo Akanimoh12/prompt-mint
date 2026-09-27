@@ -29,6 +29,38 @@ jobs:
       - name: Run Lint
         run: yarn lint
 
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run Typecheck
+        run: yarn typecheck
+
+  test:
+    name: Unit & Component Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
   a11y:
     name: Accessibility Audit
     runs-on: ubuntu-latest
@@ -40,6 +72,28 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run Tests
+        run: yarn test:frontend
+
+  build:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "yarn"
       - name: Install Yarn
         run: npm install -g @yarnpkg/cli-dist@4.9.2
 
