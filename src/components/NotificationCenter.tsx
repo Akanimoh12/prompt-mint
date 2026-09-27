@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useContext } from "react";
-import { Bell, CheckCheck, Trash2, X, Info, CheckCircle2, AlertTriangle, AlertCircle } from "lucide-react";
+import { Bell, CheckCheck, Trash2, X, Info, CheckCircle2, AlertTriangle, AlertCircle, ExternalLink } from "lucide-react";
 import { NotificationContext, type NotificationItem, type NotificationType } from "../providers/NotificationProvider";
+import { trackNotificationClick } from "@/lib/notifications/store";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 export const NotificationCenter: React.FC = () => {
@@ -14,6 +15,7 @@ export const NotificationCenter: React.FC = () => {
   const markAsRead = context?.markAsRead ?? (() => {});
   const markAllAsRead = context?.markAllAsRead ?? (() => {});
   const clearNotifications = context?.clearNotifications ?? (() => {});
+  const trackClick = context?.trackClick ?? (() => {});
 
   // Close on outside click
   useEffect(() => {
@@ -35,6 +37,14 @@ export const NotificationCenter: React.FC = () => {
     if (activeTab === "unread") return !item.isRead;
     return true;
   });
+
+  const handleTrackClick = (item: NotificationItem, link?: string) => {
+    trackClick(item.id, link);
+    trackNotificationClick(item, link);
+    if (!item.isRead) {
+      markAsRead(item.id);
+    }
+  };
 
   return (
     <div className="relative inline-block" ref={dropdownRef}>
@@ -147,6 +157,7 @@ export const NotificationCenter: React.FC = () => {
                   key={item.id}
                   item={item}
                   onMarkRead={() => markAsRead(item.id)}
+                  onTrackClick={(link) => handleTrackClick(item, link)}
                 />
               ))
             )}
@@ -160,9 +171,10 @@ export const NotificationCenter: React.FC = () => {
 interface NotificationCardProps {
   item: NotificationItem;
   onMarkRead: () => void;
+  onTrackClick?: (link?: string) => void;
 }
 
-const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead }) => {
+const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead, onTrackClick }) => {
   const getIcon = (type: NotificationType) => {
     switch (type) {
       case "success":
@@ -181,9 +193,16 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead })
     minute: "2-digit",
   });
 
+  const handleClick = () => {
+    onMarkRead();
+    if (onTrackClick) {
+      onTrackClick(item.link);
+    }
+  };
+
   return (
     <div
-      onClick={onMarkRead}
+      onClick={handleClick}
       className={`group relative flex gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
         item.isRead
           ? "bg-white/[0.02] border-white/5 opacity-75 hover:opacity-100 hover:bg-white/[0.04]"
@@ -206,6 +225,26 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead })
           </span>
         </div>
         <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">{item.message}</p>
+
+        {item.link && (
+          <div className="mt-2 flex items-center">
+            <a
+              href={item.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onTrackClick) {
+                  onTrackClick(item.link);
+                }
+              }}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 hover:underline"
+            >
+              <span>{item.linkText || "View details"}</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        )}
       </div>
 
       {!item.isRead && (
@@ -214,3 +253,4 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead })
     </div>
   );
 };
+

@@ -74,6 +74,57 @@ function fallback(
 }
 
 /**
+ * Returns true if push notification is supported in the current environment (#750).
+ */
+export function isPushSupported(ctor?: PushNotificationCtor | null): boolean {
+  if (ctor !== undefined) return ctor !== null;
+  return typeof Notification !== "undefined";
+}
+
+/**
+ * Returns the current push notification permission status (#750).
+ */
+export function getPushPermissionStatus(
+  ctor?: PushNotificationCtor | null,
+): NotificationPermission | "unsupported" {
+  const activeCtor =
+    ctor !== undefined
+      ? ctor
+      : typeof Notification !== "undefined"
+        ? (Notification as unknown as PushNotificationCtor)
+        : null;
+
+  if (!activeCtor) return "unsupported";
+  return activeCtor.permission || "default";
+}
+
+/**
+ * Requests push notification permission from the user (#750).
+ */
+export async function requestPushPermission(
+  customRequester?: (() => Promise<NotificationPermission>) | null,
+): Promise<NotificationPermission | "unsupported"> {
+  if (customRequester) {
+    try {
+      return await customRequester();
+    } catch {
+      return "denied";
+    }
+  }
+
+  if (typeof Notification === "undefined") {
+    return "unsupported";
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    return permission;
+  } catch {
+    return "denied";
+  }
+}
+
+/**
  * Attempts a push for `record`, falling back to in-app delivery when the
  * browser cannot show one. Never throws: every failure is reported as an
  * `in_app_fallback` result carrying a reason.
@@ -111,3 +162,4 @@ export async function deliverPushOrFallback(
     return fallback(record, options, "show_failed");
   }
 }
+

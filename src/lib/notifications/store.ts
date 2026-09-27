@@ -34,6 +34,22 @@ export interface NotificationRecord {
   isVisible?: boolean;
   category?: NotificationCategory;
   /**
+   * Optional URL for click-through actions (#749).
+   */
+  link?: string;
+  /**
+   * Optional custom label for the action link (#749).
+   */
+  linkText?: string;
+  /**
+   * Whether the user has clicked the notification or its tracking link (#749).
+   */
+  isClicked?: boolean;
+  /**
+   * Timestamp when the click was recorded (#749).
+   */
+  clickedAt?: number;
+  /**
    * Optional idempotency key. When present, adding a record whose key matches
    * an existing record is a no-op (prevents duplicate purchase/price alerts
    * from repeated transport deliveries).
@@ -45,6 +61,7 @@ export type NotificationAction =
   | { type: "ADD"; item: NotificationRecord }
   | { type: "MARK_READ"; id: string }
   | { type: "MARK_ALL_READ" }
+  | { type: "TRACK_CLICK"; id: string; link?: string }
   | { type: "CLEAR" }
   | { type: "HYDRATE"; items: NotificationRecord[] };
 
@@ -63,6 +80,32 @@ export function variantForCategory(
       return "secondary";
     default:
       return "primary";
+  }
+}
+
+export type NotificationClickTracker = (
+  record: NotificationRecord,
+  link?: string,
+) => void;
+
+let globalClickTracker: NotificationClickTracker | null = null;
+
+export function setNotificationClickTracker(
+  tracker: NotificationClickTracker | null,
+): void {
+  globalClickTracker = tracker;
+}
+
+export function trackNotificationClick(
+  record: NotificationRecord,
+  link?: string,
+): void {
+  if (globalClickTracker) {
+    try {
+      globalClickTracker(record, link);
+    } catch {
+      // Tracker errors should not crash notification flow
+    }
   }
 }
 
@@ -92,6 +135,18 @@ export function notificationsReducer(
       );
     case "MARK_ALL_READ":
       return state.map((n) => (n.isRead ? n : { ...n, isRead: true }));
+    case "TRACK_CLICK":
+      return state.map((n) =>
+        n.id === action.id
+          ? {
+              ...n,
+              isClicked: true,
+              clickedAt: Date.now(),
+              isRead: true,
+              ...(action.link && !n.link ? { link: action.link } : {}),
+            }
+          : n,
+      );
     case "CLEAR":
       return [];
     case "HYDRATE":
@@ -104,3 +159,4 @@ export function notificationsReducer(
 export function selectUnreadCount(items: NotificationRecord[]): number {
   return items.reduce((count, n) => (n.isRead ? count : count + 1), 0);
 }
+
