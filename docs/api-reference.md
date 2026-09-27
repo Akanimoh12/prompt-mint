@@ -160,6 +160,24 @@ The canonical unlock URLs are `/api/auth/challenge` and `/api/prompts/unlock`; o
 | GET | `/api/notifications` | User | none -> `Notification[]` |
 | GET | `/api/notifications/export` | User | `walletAddress` required, `format=csv\|json` (default `json`) -> attachment of the full notification history |
 | PATCH | `/api/notifications/{id}/read` | User | path ID -> `{success}` |
+
+### Notification daily digest (local builder)
+
+`buildDailyDigest(notifications, { now?, windowMs? })` from
+`src/lib/notifications/digest.ts` rolls recent `NotificationRecord[]` items
+into a daily activity summary without new network calls:
+
+```ts
+import { buildDailyDigest } from "@/lib/notifications/digest";
+
+const digest = buildDailyDigest(notifications);
+// { date, total, unread, groups: [{ category, count, unread, items }] }
+```
+
+Rules: items are kept strictly within `[now - windowMs, now]`
+(`windowMs` defaults to 24h, `now` defaults to `Date.now()`); items group by
+`category`; items sort by `calculateImportanceScore(item, now)` descending with
+`createdAt` descending tie-breaks; groups sort by max item importance.
 | GET/PUT | `/api/prompt-order` | Wallet | none / `PromptOrder` -> `PromptOrder` |
 | GET/POST | `/api-keys` | Key owner | owner query / key body -> key summaries or plaintext once |
 | DELETE | `/api-keys/{id}` | Key owner | `{ownerWallet}` -> revoked key |

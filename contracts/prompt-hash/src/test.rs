@@ -7265,3 +7265,142 @@ fn test_pagination_zero_limit() {
     assert_eq!(prompts.len(), 0);
     assert_eq!(count, 1);
 }
+
+// ─── #404: fee routing edge cases in buy_prompt ────────────────────────────
+
+#[test]
+fn test_buy_prompt_zero_fee_wallet_routes_full_amount_to_seller() {
+    let env: Env = Default::default();
+    let context = setup(&env);
+    let client = PromptHashContractClient::new(&env, &context.contract);
+    let xlm_client = token::StellarAssetClient::new(&env, &context.xlm);
+
+    set_fee_percentage(&client, &context, 0);
+
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let price: i128 = 10_000;
+    let prompt_id = create_prompt(
+        &env,
+        &client,
+        &creator,
+        "Zero Fee Wallet Prompt",
+        price,
+        &context.xlm,
+    );
+
+    fund_buyer(&xlm_client, &buyer, &context.contract, price);
+
+    let seller_start = xlm_client.balance(&creator);
+    let fee_start = xlm_client.balance(&context.fee_wallet);
+
+    client.buy_prompt(&buyer, &prompt_id, &None::<Bytes>, &price, &None::<Bytes>);
+
+    // With a zero fee, the seller receives the full payment and the fee
+    // wallet balance is untouched.
+    assert_eq!(xlm_client.balance(&creator), seller_start + price);
+    assert_eq!(xlm_client.balance(&context.fee_wallet), fee_start);
+    assert!(client.has_access(&buyer, &prompt_id));
+    assert_eq!(client.get_prompt(&prompt_id).sales_count, 1);
+}
+
+#[test]
+fn test_buy_prompt_fee_rounding_remainder_preserves_total() {
+    for price in [1i128, 19i128, 101i128] {
+        let env: Env = Default::default();
+        let context = setup(&env);
+        let client = PromptHashContractClient::new(&env, &context.contract);
+        let xlm_client = token::StellarAssetClient::new(&env, &context.xlm);
+
+        let creator = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        let prompt_id = create_prompt(
+            &env,
+            &client,
+            &creator,
+            "Rounding Prompt",
+            price,
+            &context.xlm,
+        );
+
+        fund_buyer(&xlm_client, &buyer, &context.contract, price);
+
+        let seller_start = xlm_client.balance(&creator);
+        let fee_start = xlm_client.balance(&context.fee_wallet);
+
+        client.buy_prompt(&buyer, &prompt_id, &None::<Bytes>, &price, &None::<Bytes>);
+
+        // Default fee is 500 bps; integer division truncates and the seller
+        // keeps the remainder so no stroops are created or destroyed.
+        let expected_fee = price * 500 / 10_000;
+        let expected_seller = price - expected_fee;
+        let seller_delta = xlm_client.balance(&creator) - seller_start;
+        let fee_delta = xlm_client.balance(&context.fee_wallet) - fee_start;
+
+        assert_eq!(fee_delta, expected_fee);
+        assert_eq!(seller_delta, expected_seller);
+        assert_eq!(seller_delta + fee_delta, price);
+        assert!(client.has_access(&buyer, &prompt_id));
+    }
+}
+
+#[test]
+fn test_buy_prompt_insufficient_balance_leaves_state_unchanged() {
+    let env: Env = Default::default();
+    let context = setup(&env);
+    let client = PromptHashContractClient::new(&env, &context.contract);
+    let xlm_client = token::StellarAssetClient::new(&env, &context.xlm);
+
+    let creator = Address::generate(&env);
+    let price: i128 = 10_000;
+    let prompt_id = create_prompt(
+        &env,
+        &client,
+        &creator,
+        "Insufficient Balance Prompt",
+        price,
+        &context.xlm,
+    );
+
+    // Partially funded buyer: balance is one stroop short of the payment.
+    let short_buyer = Address::generate(&env);
+    fund_buyer(&xlm_client, &short_buyer, &context.contract, price - 1);
+    let seller_start = xlm_client.balance(&creator);
+    let fee_start = xlm_client.balance(&context.fee_wallet);
+
+    let result = client.try_buy_prompt(
+        &short_buyer,
+        &prompt_id,
+        &None::<Bytes>,
+        &price,
+        &None::<Bytes>,
+    );
+    match result {
+        Err(Ok(Error::InsufficientBalance)) => {}
+        other => panic!("expected InsufficientBalance, got {:?}", other),
+    }
+
+    assert!(!client.has_access(&short_buyer, &prompt_id));
+    assert_eq!(client.get_prompt(&prompt_id).sales_count, 0);
+    assert_eq!(xlm_client.balance(&creator), seller_start);
+    assert_eq!(xlm_client.balance(&context.fee_wallet), fee_start);
+
+    // Unfunded buyer: zero balance must fail the same way without side effects.
+    let empty_buyer = Address::generate(&env);
+    let result = client.try_buy_prompt(
+        &empty_buyer,
+        &prompt_id,
+        &None::<Bytes>,
+        &price,
+        &None::<Bytes>,
+    );
+    match result {
+        Err(Ok(Error::InsufficientBalance)) => {}
+        other => panic!("expected InsufficientBalance, got {:?}", other),
+    }
+
+    assert!(!client.has_access(&empty_buyer, &prompt_id));
+    assert_eq!(client.get_prompt(&prompt_id).sales_count, 0);
+    assert_eq!(xlm_client.balance(&creator), seller_start);
+    assert_eq!(xlm_client.balance(&context.fee_wallet), fee_start);
+}

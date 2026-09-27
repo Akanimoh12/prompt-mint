@@ -31,6 +31,13 @@ export interface NotifyEventInput {
   title?: string;
   /** Idempotency key so repeated transport deliveries do not duplicate. */
   dedupeKey?: string;
+  /** Associated prompt ID for grouping (#747). */
+  promptId?: string;
+  /** Associated prompt title for group headers (#747). */
+  promptTitle?: string;
+  /** Importance score / tier overrides (#746). */
+  importance?: "critical" | "high" | "medium" | "low";
+  importanceScore?: number;
 }
 
 export interface NotificationContextType {
@@ -157,7 +164,16 @@ export const NotificationProvider: React.FC<{
   );
 
   const notifyEvent = useCallback(
-    ({ category, message, title, dedupeKey }: NotifyEventInput) => {
+    ({
+      category,
+      message,
+      title,
+      dedupeKey,
+      promptId,
+      promptTitle,
+      importance,
+      importanceScore,
+    }: NotifyEventInput) => {
       addRecord(
         {
           id: newId(),
@@ -169,6 +185,10 @@ export const NotificationProvider: React.FC<{
           isVisible: true,
           category,
           dedupeKey,
+          promptId,
+          promptTitle,
+          importance,
+          importanceScore,
         },
         true,
       );
