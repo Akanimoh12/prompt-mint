@@ -58,6 +58,11 @@ import { translateError } from "../../lib/i18n-errors";
 import { createFocusTrapKeydownHandler } from "@/lib/a11y/focusTrap";
 import { explorerTxUrl } from "../../lib/stellar/explorer";
 import { recordTransaction } from "../../lib/history/transactions";
+import { NotificationContext } from "../../providers/NotificationProvider";
+import {
+  showPurchaseSuccessToast,
+  showPurchaseErrorToast,
+} from "@/lib/notifications/purchaseToast";
 
 export type BuyerStatus =
   | "IDLE"
@@ -396,6 +401,8 @@ export const PromptModal: React.FC<PromptModalProps> = ({
 
   const networkState = useNetworkState();
 
+  const notificationContext = useContext(NotificationContext);
+
   const {
     execute: runPurchase,
     isLoading: isPurchasing,
@@ -434,8 +441,8 @@ export const PromptModal: React.FC<PromptModalProps> = ({
         setStatus("UNLOCKING");
         onRefresh?.();
         trackEventWithWallet("prompt_purchase_completed", wallet?.address, { promptId: itemId });
+        const hash = data.txHash || txHash;
         if (wallet?.address) {
-          const hash = data.txHash || txHash;
           recordTransaction(wallet.address, {
             id: hash || `purchase-${itemId}-${Date.now()}`,
             txHash: hash || undefined,
@@ -449,13 +456,29 @@ export const PromptModal: React.FC<PromptModalProps> = ({
               : undefined,
           });
         }
-        runUnlock(data.txHash || txHash).catch(() => {});
+        showPurchaseSuccessToast(hash, {
+          title: promptData?.title ? `Purchased: ${promptData.title}` : "Purchase Successful!",
+          network: wallet?.network,
+        });
+        notificationContext?.notifyEvent({
+          category: "purchase",
+          title: "Purchase Successful",
+          message: `Purchased prompt #${itemId}.${hash ? ` Tx: ${hash}` : ""}`,
+        });
+        runUnlock(hash).catch(() => {});
       },
-      onError: () => {
+      onError: (error) => {
         setStatus("ERROR");
         trackEventWithWallet("prompt_purchase_failed", wallet?.address, {
           promptId: itemId,
           reasonCode: "purchase_error",
+        });
+        const translatedMsg = translateError(error.message);
+        showPurchaseErrorToast(translatedMsg);
+        notificationContext?.notifyEvent({
+          category: "purchase",
+          title: "Purchase Failed",
+          message: translatedMsg,
         });
       },
     },
