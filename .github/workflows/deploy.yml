@@ -63,14 +63,11 @@ jobs:
           retention-days: 30
 
       - name: Deploy to Vercel
-        if: >-
-          vars.VERCEL_TOKEN != '' &&
-          vars.VERCEL_ORG_ID != '' &&
-          vars.VERCEL_PROJECT_ID != ''
-        run: |
-          npx --yes vercel@latest pull --yes --environment=production --token "$VERCEL_TOKEN"
-          npx --yes vercel@latest build --prod --token "$VERCEL_TOKEN"
-          npx --yes vercel@latest deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+        if: |
+          env.VERCEL_TOKEN != '' &&
+          env.VERCEL_ORG_ID != '' &&
+          env.VERCEL_PROJECT_ID != ''
+        run: yarn dlx vercel@latest --prod --yes
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -255,10 +252,6 @@ jobs:
             ./artifacts/wasm/*.wasm.sig
           retention-days: 90
 
-  # ── Generate SBOM ───────────────────────────────────────────────────────────
-  # Fix for issue #816: the server SBOM step was running `npx @cyclonedx/cyclonedx-npm`
-  # which internally calls `npm ls` and fails when package-lock.json is not in sync.
-  # Fixed by passing `--package-lock-only` so npm ls is bypassed entirely.
   generate-sbom:
     runs-on: ubuntu-latest
     permissions:
