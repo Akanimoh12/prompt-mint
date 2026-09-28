@@ -14,6 +14,14 @@ export type ModerationAction =
 
 export type ModerationTargetType = "review" | "user" | "report" | "prompt";
 
+/**
+ * Outcome recorded by a reviewer during a quality spot-check.
+ * - "correct"   – the original moderation decision was the right call.
+ * - "incorrect" – the decision was wrong (e.g. false-positive takedown).
+ * - "disputed"  – reviewer is uncertain; needs escalation.
+ */
+export type ModerationOutcome = "correct" | "incorrect" | "disputed";
+
 export interface ModerationLogEntry {
   id: string;
   action: ModerationAction;
@@ -23,6 +31,14 @@ export interface ModerationLogEntry {
   reason: string;
   details?: string;
   createdAt: number;
+  /** Set by a reviewer performing a quality spot-check after the decision. */
+  outcome?: ModerationOutcome;
+  /**
+   * Reviewer-assigned quality score in [0.0, 1.0].
+   * 1.0 = perfect decision, 0.0 = completely wrong.
+   * Derived from `outcome` when not supplied explicitly.
+   */
+  qualityScore?: number;
 }
 
 // ── Abuse reports ─────────────────────────────────────────────────────────────
@@ -200,6 +216,41 @@ export function addModerationLog(entry: Omit<ModerationLogEntry, "id" | "created
 
 export function getModerationLogs(): ModerationLogEntry[] {
   return logs;
+}
+
+export function getModerationLogById(id: string): ModerationLogEntry | undefined {
+  return logs.find((entry) => entry.id === id);
+}
+
+const OUTCOME_DEFAULT_SCORES: Record<ModerationOutcome, number> = {
+  correct: 1.0,
+  incorrect: 0.0,
+  disputed: 0.5,
+};
+
+/**
+ * Records a quality outcome for an existing moderation log entry.
+ * Returns `undefined` if the entry does not exist.
+ *
+ * @param qualityScore Optional override in [0.0, 1.0]; defaults to the
+ *   canonical score for the given outcome when omitted.
+ */
+export function setModerationLogOutcome(
+  id: string,
+  outcome: ModerationOutcome,
+  qualityScore?: number,
+): ModerationLogEntry | undefined {
+  const entry = getModerationLogById(id);
+  if (!entry) return undefined;
+
+  const clampedScore =
+    qualityScore !== undefined
+      ? Math.min(1, Math.max(0, qualityScore))
+      : OUTCOME_DEFAULT_SCORES[outcome];
+
+  entry.outcome = outcome;
+  entry.qualityScore = clampedScore;
+  return entry;
 }
 
 export function isAuthorizedModerator(address: string): boolean {
