@@ -14,6 +14,16 @@ export const METRIC_NAMES = {
   activeUsers: "active_users_total",
   transactionVolume: "transaction_volume_total",
   endpointHealth: "api_endpoint_health",
+  /**
+   * Gauge: the quality score (0.0–1.0) of a moderation decision recorded
+   * during a spot-check.  Labels: targetType, outcome.
+   */
+  moderationQualityScore: "moderation_quality_score",
+  /**
+   * Counter: incremented each time a moderation outcome is recorded.
+   * Labels: targetType, outcome.
+   */
+  moderationOutcomeRecorded: "moderation_outcome_recorded_total",
 } as const;
 
 type MetricLabels = Record<string, string | number>;
@@ -130,6 +140,27 @@ export const metrics = {
 
   trackEndpointHealth(path: string, healthy: boolean, latencyMs: number) {
     this.emit(METRIC_NAMES.endpointHealth, healthy ? 1 : 0, { path, latencyMs });
+  },
+
+  /**
+   * Records the quality outcome of a moderation decision captured during a
+   * spot-check review.
+   *
+   * Emits two metrics:
+   *  - `moderation_quality_score`            (gauge, 0.0–1.0)
+   *  - `moderation_outcome_recorded_total`   (counter)
+   *
+   * @param targetType  The type of moderated target ("prompt" | "review" | "user" | "report")
+   * @param outcome     The reviewer's verdict ("correct" | "incorrect" | "disputed")
+   * @param score       Quality score in [0.0, 1.0]
+   */
+  trackModerationQuality(
+    targetType: string,
+    outcome: "correct" | "incorrect" | "disputed",
+    score: number,
+  ) {
+    this.emit(METRIC_NAMES.moderationQualityScore, score, { targetType, outcome });
+    this.emit(METRIC_NAMES.moderationOutcomeRecorded, 1, { targetType, outcome });
   },
 
   _resetForTests() {
