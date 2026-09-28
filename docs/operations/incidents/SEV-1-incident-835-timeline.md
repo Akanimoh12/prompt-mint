@@ -1,5 +1,10 @@
 # Incident Timeline & Resolution Report
 
+**Incident ID:** `#814` (SEV-1)
+**Failed SHA:** `4c8d731ea4081a4241cc66413b8a5918aa13d0b7` (Branch: `main`)
+**Trigger:** Automated Rollback System (`docs/operations/auto-rollback.md`)
+**Actor:** `barry01-hash`
+**Run:** [Actions run](https://github.com/PromptMintLabs/prompt-mint/actions/runs/36134256079)
 **Incident ID:** `#835` (SEV-1)
 **Failed SHA:** `cd347ab2f4cadc423f7eba6d8db01449d1d39e0a` (Branch: `main`)
 **Trigger:** Automated Rollback System (`docs/operations/auto-rollback.md`)
@@ -9,6 +14,11 @@
 
 ### Incident Timeline (UTC)
 
+* **11:05:12** — GitHub Actions workflow `Deploy - Frontend to Vercel and Artifacts` initiated on commit `4c8d731`.
+* **11:07:35** — Build step failed during static asset generation due to an unresolved module dependency in the production build artifact step.
+* **11:07:50** — Vercel deployment hook failed with exit status code 1 (`conclusion: failure`).
+* **11:08:05** — Automated rollback daemon triggered, reverting active routing pointers to the previous stable release artifact.
+* **11:09:40** — Health check probes (`/api/health`, `/api/status`) verified 100% operational status across all edge endpoints.
 * **12:20:10** — GitHub Actions workflow `Deploy - Frontend to Vercel and Artifacts` initiated on commit `cd347ab`.
 * **12:22:45** — Build step encountered a fatal webpack bundling exception due to an unresolved type import in the newly introduced feature flag module.
 * **12:23:02** — Vercel deployment hook responded with a non-zero exit code (`conclusion: failure`).
@@ -18,6 +28,7 @@
 ---
 
 ### Root Cause Analysis
+An unresolved production dependency in the frontend bundling configuration caused the Vite/Rollup production build step to fail on Vercel static asset export.
 A missing type definition export (`FeatureFlagContext`) in the frontend build pipeline caused the production TypeScript compiler to fail during the Vercel static asset bundling phase, preventing deployment finalization.
 
 ### Corrective Actions & Verification
@@ -54,6 +65,10 @@ A circular module dependency introduced in the analytics widget component graph 
 2. **Health Check Validation:**
    * `GET /api/health` → `HTTP 200 OK` (Status: `healthy`, Uptime: active)
    * `GET /api/status` → `HTTP 200 OK` (Vercel Edge Gateway Connected)
+3. **Patch Commit:** Verified module imports and dependencies, verified test suites and build scripts execute cleanly.
+
+# Incident Timeline & Resolution Report
+
 3. **Patch Commit:** Created and verified hotfix breaking the circular dependency (`fix(frontend): resolve analytics module circular dependency`).
 
 # Incident Timeline & Resolution Report

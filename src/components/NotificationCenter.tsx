@@ -1,23 +1,7 @@
-import React, { useState, useRef, useEffect, useContext, useMemo } from "react";
-import {
-  Bell,
-  CheckCheck,
-  Trash2,
-  X,
-  Info,
-  CheckCircle2,
-  AlertTriangle,
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  Layers,
-  Flame,
-} from "lucide-react";
-import {
-  NotificationContext,
-  type NotificationItem,
-  type NotificationType,
-} from "../providers/NotificationProvider";
+import React, { useState, useRef, useEffect, useContext } from "react";
+import { Bell, CheckCheck, Trash2, X, Info, CheckCircle2, AlertTriangle, AlertCircle, ExternalLink } from "lucide-react";
+import { NotificationContext, type NotificationItem, type NotificationType } from "../providers/NotificationProvider";
+import { trackNotificationClick } from "@/lib/notifications/store";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
   groupNotificationsByPrompt,
@@ -44,6 +28,7 @@ export const NotificationCenter: React.FC = () => {
   const markAsRead = context?.markAsRead ?? (() => {});
   const markAllAsRead = context?.markAllAsRead ?? (() => {});
   const clearNotifications = context?.clearNotifications ?? (() => {});
+  const trackClick = context?.trackClick ?? (() => {});
 
   // A/B Experiment assignment (#745)
   const experiment = useNotificationExperiment<{ groupByType?: boolean }>(
@@ -118,6 +103,14 @@ export const NotificationCenter: React.FC = () => {
       );
     }).length;
   }, [notifications]);
+
+  const handleTrackClick = (item: NotificationItem, link?: string) => {
+    trackClick(item.id, link);
+    trackNotificationClick(item, link);
+    if (!item.isRead) {
+      markAsRead(item.id);
+    }
+  };
 
   return (
     <div className="relative inline-block" ref={dropdownRef}>
@@ -258,78 +251,14 @@ export const NotificationCenter: React.FC = () => {
                 size="sm"
               />
             ) : (
-              processedItems.map((item) => {
-                if (isNotificationGroup(item)) {
-                  const isExpanded = !!expandedGroups[item.id];
-                  return (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden"
-                    >
-                      {/* Collapsed Group Header */}
-                      <div
-                        onClick={() => toggleGroup(item.id)}
-                        className="flex items-center justify-between p-3 cursor-pointer hover:bg-white/[0.05] transition-colors"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs font-bold text-white truncate">
-                                {item.promptTitle}
-                              </p>
-                              <span className="rounded-full bg-cyan-400/10 border border-cyan-400/20 px-1.5 py-0.2 text-[10px] font-semibold text-cyan-300 shrink-0">
-                                {item.items.length} items
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-400 truncate">
-                              {item.unreadCount > 0
-                                ? `${item.unreadCount} unread updates`
-                                : "All updates read"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {item.unreadCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={(e) => markGroupAsRead(item, e)}
-                            className="text-[10px] text-slate-400 hover:text-amber-300 px-2 py-1 rounded hover:bg-white/5"
-                            title="Mark prompt group as read"
-                          >
-                            Read group
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Expanded Group Items */}
-                      {isExpanded && (
-                        <div className="border-t border-white/5 p-2 space-y-1.5 bg-black/20">
-                          {item.items.map((subItem) => (
-                            <NotificationCard
-                              key={subItem.id}
-                              item={subItem}
-                              onMarkRead={() => markAsRead(subItem.id)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-
-                return (
-                  <NotificationCard
-                    key={item.id}
-                    item={item}
-                    onMarkRead={() => markAsRead(item.id)}
-                  />
-                );
-              })
+              filteredNotifications.map((item) => (
+                <NotificationCard
+                  key={item.id}
+                  item={item}
+                  onMarkRead={() => markAsRead(item.id)}
+                  onTrackClick={(link) => handleTrackClick(item, link)}
+                />
+              ))
             )}
           </div>
         </div>
@@ -341,9 +270,10 @@ export const NotificationCenter: React.FC = () => {
 interface NotificationCardProps {
   item: NotificationItem;
   onMarkRead: () => void;
+  onTrackClick?: (link?: string) => void;
 }
 
-const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead }) => {
+const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead, onTrackClick }) => {
   const getIcon = (type: NotificationType) => {
     switch (type) {
       case "success":
@@ -362,11 +292,16 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead })
     minute: "2-digit",
   });
 
-  const importanceEval = calculateImportanceScore(item);
+  const handleClick = () => {
+    onMarkRead();
+    if (onTrackClick) {
+      onTrackClick(item.link);
+    }
+  };
 
   return (
     <div
-      onClick={onMarkRead}
+      onClick={handleClick}
       className={`group relative flex gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
         item.isRead
           ? "bg-white/[0.02] border-white/5 opacity-75 hover:opacity-100 hover:bg-white/[0.04]"
@@ -400,9 +335,27 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead })
             {formattedTime}
           </span>
         </div>
-        <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
-          {item.message}
-        </p>
+        <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">{item.message}</p>
+
+        {item.link && (
+          <div className="mt-2 flex items-center">
+            <a
+              href={item.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onTrackClick) {
+                  onTrackClick(item.link);
+                }
+              }}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-400 hover:text-amber-300 hover:underline"
+            >
+              <span>{item.linkText || "View details"}</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        )}
       </div>
 
       {!item.isRead && (
@@ -411,3 +364,4 @@ const NotificationCard: React.FC<NotificationCardProps> = ({ item, onMarkRead })
     </div>
   );
 };
+
