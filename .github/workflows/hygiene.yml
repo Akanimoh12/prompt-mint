@@ -12,9 +12,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Search for conflict markers
         run: |
-          if grep -rnE "^<<<<<<<|^=======|^>>>>>>>" . --exclude-dir=.git --exclude=hygiene.yml; then
+          if grep -rnE"^<<<<<<<|^=======|^>>>>>>" . --exclude-dir=.git --exclude=hygiene.yml; then
             echo "Merge conflict markers found in the codebase. Please resolve them."
             exit 1
           else
             echo "No merge conflict markers found."
           fi
+
+  accessibility:
+    name: Accessibility Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run accessibility audit
+        run: npx pa11y-ci
