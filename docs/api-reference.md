@@ -160,6 +160,24 @@ The canonical unlock URLs are `/api/auth/challenge` and `/api/prompts/unlock`; o
 | GET | `/api/notifications` | User | none -> `Notification[]` |
 | GET | `/api/notifications/export` | User | `walletAddress` required, `format=csv\|json` (default `json`) -> attachment of the full notification history |
 | PATCH | `/api/notifications/{id}/read` | User | path ID -> `{success}` |
+
+### Notification daily digest (local builder)
+
+`buildDailyDigest(notifications, { now?, windowMs? })` from
+`src/lib/notifications/digest.ts` rolls recent `NotificationRecord[]` items
+into a daily activity summary without new network calls:
+
+```ts
+import { buildDailyDigest } from "@/lib/notifications/digest";
+
+const digest = buildDailyDigest(notifications);
+// { date, total, unread, groups: [{ category, count, unread, items }] }
+```
+
+Rules: items are kept strictly within `[now - windowMs, now]`
+(`windowMs` defaults to 24h, `now` defaults to `Date.now()`); items group by
+`category`; items sort by `calculateImportanceScore(item, now)` descending with
+`createdAt` descending tie-breaks; groups sort by max item importance.
 | GET/PUT | `/api/prompt-order` | Wallet | none / `PromptOrder` -> `PromptOrder` |
 | GET/POST | `/api-keys` | Key owner | owner query / key body -> key summaries or plaintext once |
 | DELETE | `/api-keys/{id}` | Key owner | `{ownerWallet}` -> revoked key |
@@ -196,42 +214,86 @@ curl -sS "$BASE_URL/api/notifications/export?walletAddress=G...&format=csv" \
   -H 'Accept: text/csv' -o notifications.csv
 ```
 
-For every request/response property, enum, and reusable schema, use the OpenAPI contract above. Wallet challenge/unlock and buyer mutation schemas are also documented in [`api-request-schemas.md`](./api-request-schemas.md).
+## Creator Workspace Endpoints
 
-## Serverless handler appendix
+### Get draft prompts
 
-These deployed handlers live under `api/` and are not currently represented
-in the Express OpenAPI document. They use the same base URL and JSON/error
-conventions unless noted.
+`GET /api/prompts/creator/:walletAddress/drafts`
 
-| Method | Path | Authentication | Request -> success |
-|---|---|---|---|
-| GET | `/api/status` | Public | none -> versioned service status |
-| GET | `/api/sitemap` | Public | none -> XML sitemap |
-| POST | `/api/analytics/events` | Public, rate limited | `{event,occurredAt,properties}` -> `202 {accepted:true}` |
-| POST | `/api/bundles/unlock` | Signed wallet challenge + bundle entitlement | `{token,bundleId,address,signedMessage}` -> unlocked prompt array |
-| GET | `/api/creators/reputation` | Public | creator query -> reputation JSON |
-| POST | `/api/images/validate` | Public | `{url}` -> `{valid,contentType,contentLength}` |
-| POST | `/api/auth/approveKeyRecovery` | Admin recovery token | `{scenario,operatorReference,fixture}` -> verification result |
-| POST | `/api/auth/rotateSecret` | Admin token | none -> versioned rotation result |
-| GET | `/api/moderation/data` | Signed moderator wallet | query -> moderation data |
-| POST | `/api/moderation/actions` | Signed moderator wallet | `{moderatorAddress,moderatorTimestamp,moderatorSignature,confirmed,actions[]}` -> applied/errors |
-| GET | `/api/moderation/logs` | Signed moderator wallet | query -> moderation logs |
-| GET | `/api/reviews/data` | Public | `promptId` query -> reviews |
-| GET | `/api/reviews/list` | Public | `promptId` query -> reviews |
-| GET | `/api/reviews/eligibility` | Buyer wallet policy | `promptId`, `userAddress` query -> eligibility |
-| POST | `/api/reviews/submit` | Verified buyer + signature | `{promptId,userAddress,rating,text,signature}` -> review |
-| PUT | `/api/reviews/edit` | Review author + on-chain access | `{promptId,reviewId,userAddress,rating,text}` -> updated review |
-| POST | `/api/reviews/respond` | Creator policy | response body -> seller response |
-| POST | `/api/reviews/vote` | Wallet policy | vote body -> vote result |
-| POST | `/api/webhooks` | Webhook policy | webhook body -> delivery/registration result |
+Returns draft and ready-to-publish prompts for the connected creator wallet.
 
-Analytics accepts only known taxonomy events, rejects raw wallet addresses,
-and has a 20kb body limit. Image validation accepts HTTP(S) URLs only and
-allows JPEG, PNG, WebP, and GIF files up to 5MB. Moderator actions accept 1-50
-actions and may return `207` when some actions fail.
+## Moderation Endpoints
 
-For external developers integrating against these endpoints, see the
-[Public API Survival Guide](./public-api-survival-guide.md) for rate-limit
-handling, error recovery patterns, unlock flow gotchas, and the testnet
-checklist.
+### Submit a prompt report
+
+`POST /api/moderation/reports`
+
+Creates a pending report for moderator review. The request body accepts
+`promptId`, `reporterAddress`, `reason`, and an optional `description`.
+
+### List moderation reports
+
+`GET /api/moderation/reports`
+
+Requires an admin bearer token. Optional query parameters are `promptId`,
+`status`, and `assignedReviewer`. Use `assignedReviewer=unassigned` to find
+unassigned reports. Reports are returned in descending priority order, with oldest-first
+ordering when scores tie. Each report includes an explainable `priority` value:
+
+```json
+{
+  "score": 100,
+  "level": "critical",
+  "reasonWeight": 100,
+  "ageBonus": 0
+}
+```
+
+Priority combines report reason severity with a capped age bonus, so older
+unresolved reports cannot remain at the bottom of the queue indefinitely.
+
+### Assign a report to a reviewer
+
+`PATCH /api/moderation/reports/:reportId/assignment`
+
+Requires an admin bearer token. Send `{ "reviewerAddress": "g..." }` to assign
+the report, or `{ "reviewerAddress": null }` to return it to the unassigned
+queue. The optional `X-Moderator-Address` header records who made the change.
+The response includes `assignedReviewer`, `assignedAt`, and `assignedBy`.
+
+### Update moderation collaboration notes
+
+`PATCH /api/moderation/reports/:reportId/notes`
+
+Requires an admin bearer token. Send `{ "notes": "..." }` to replace the
+moderation team's shared notes, or an empty string to clear them. Notes support
+multiline text up to 5,000 characters. The optional `X-Moderator-Address` header
+records who last edited the notes; the response includes
+`collaborationNotesUpdatedAt` and `collaborationNotesUpdatedBy`.
+
+### Version updates
+
+`POST /api/prompts/version`
+
+Creates a new version for a prompt owned by the calling wallet.
+
+## Account And Auth Flow
+
+### Challenge token
+
+`POST /api/unlock/challenge`
+
+Issues a short-lived challenge token for wallet verification.
+
+### Unlock prompt
+
+`POST /api/unlock/verify`
+
+Verifies the wallet signature and on-chain entitlement before returning decrypted content.
+
+## Notes For Frontend Contributors
+
+- Listing metadata is normalized server-side before persistence.
+- Category casing is canonicalized so the frontend can send user-friendly values.
+- The buyer dashboard reads from `/api/prompts/buyer/:walletAddress/saved` and `/api/prompts/buyer/:walletAddress/owned` to populate separate library sections.
+- Save and unsave actions are intentionally idempotent from the UI perspective.

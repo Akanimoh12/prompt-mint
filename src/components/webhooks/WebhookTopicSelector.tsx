@@ -1,7 +1,16 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+const Checkbox = ({ id, checked, onCheckedChange, disabled }: { id?: string; checked?: boolean; onCheckedChange?: (checked: boolean) => void; disabled?: boolean }) => (
+  <input
+    id={id}
+    type="checkbox"
+    checked={checked}
+    disabled={disabled}
+    onChange={(e) => onCheckedChange?.(e.target.checked)}
+    className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-purple-600 focus:ring-purple-500"
+  />
+);
 
 interface EventType {
   name: string;

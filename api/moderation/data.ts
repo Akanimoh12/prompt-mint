@@ -14,6 +14,14 @@ export type ModerationAction =
 
 export type ModerationTargetType = "review" | "user" | "report" | "prompt";
 
+/**
+ * Outcome recorded by a reviewer during a quality spot-check.
+ * - "correct"   – the original moderation decision was the right call.
+ * - "incorrect" – the decision was wrong (e.g. false-positive takedown).
+ * - "disputed"  – reviewer is uncertain; needs escalation.
+ */
+export type ModerationOutcome = "correct" | "incorrect" | "disputed";
+
 export interface ModerationLogEntry {
   id: string;
   action: ModerationAction;
@@ -23,6 +31,14 @@ export interface ModerationLogEntry {
   reason: string;
   details?: string;
   createdAt: number;
+  /** Set by a reviewer performing a quality spot-check after the decision. */
+  outcome?: ModerationOutcome;
+  /**
+   * Reviewer-assigned quality score in [0.0, 1.0].
+   * 1.0 = perfect decision, 0.0 = completely wrong.
+   * Derived from `outcome` when not supplied explicitly.
+   */
+  qualityScore?: number;
 }
 
 // ── Abuse reports ─────────────────────────────────────────────────────────────
@@ -202,6 +218,41 @@ export function getModerationLogs(): ModerationLogEntry[] {
   return logs;
 }
 
+export function getModerationLogById(id: string): ModerationLogEntry | undefined {
+  return logs.find((entry) => entry.id === id);
+}
+
+const OUTCOME_DEFAULT_SCORES: Record<ModerationOutcome, number> = {
+  correct: 1.0,
+  incorrect: 0.0,
+  disputed: 0.5,
+};
+
+/**
+ * Records a quality outcome for an existing moderation log entry.
+ * Returns `undefined` if the entry does not exist.
+ *
+ * @param qualityScore Optional override in [0.0, 1.0]; defaults to the
+ *   canonical score for the given outcome when omitted.
+ */
+export function setModerationLogOutcome(
+  id: string,
+  outcome: ModerationOutcome,
+  qualityScore?: number,
+): ModerationLogEntry | undefined {
+  const entry = getModerationLogById(id);
+  if (!entry) return undefined;
+
+  const clampedScore =
+    qualityScore !== undefined
+      ? Math.min(1, Math.max(0, qualityScore))
+      : OUTCOME_DEFAULT_SCORES[outcome];
+
+  entry.outcome = outcome;
+  entry.qualityScore = clampedScore;
+  return entry;
+}
+
 export function isAuthorizedModerator(address: string): boolean {
   const configured = (process.env.MODERATOR_ADDRESSES ?? "")
     .split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
@@ -264,4 +315,109 @@ export function verifyModeratorAuth({
   }
 
   return { ok: true, status: 200 };
+}
+
+// ── Accuracy review sampling ───────────────────────────────────────────────
+// Deterministic sampling over resolved/actioned moderation outcomes so a
+// reviewer can re-check a reproducible subset. Accuracy percentages are
+// intentionally NOT derived here: there is no audited/appealed outcome field
+// on reports or logs, so emitting a percentage would be fictional.
+
+export type AccuracySampleActionFilter = "takedown" | "dismiss" | "all";
+
+export interface AccuracySampleItem {
+  id: string;
+  kind: "report" | "log";
+  action: string;
+  targetId: string;
+  targetType: string;
+  createdAt: number;
+}
+
+export const ACCURACY_SAMPLE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+export const ACCURACY_SAMPLE_DEFAULT_SEED = "moderation-accuracy-default";
+
+export function hashSeedToUint32(seed: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+export function mulberry32(randomSeed: number): () => number {
+  let state = randomSeed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function isTakedownAction(action: string): boolean {
+  return action === "prompt_takedown" || action === "review_removed";
+}
+
+function isDismissAction(action: string): boolean {
+  return action === "report_dismissed";
+}
+
+export function getAccuracyEligibleItems(
+  options: { action?: AccuracySampleActionFilter; since?: number; now?: number } = {},
+): AccuracySampleItem[] {
+  const { action = "all", since, now = Date.now() } = options;
+  const windowStart = since ?? now - ACCURACY_SAMPLE_WINDOW_MS;
+
+  const eligible: AccuracySampleItem[] = [];
+
+  for (const report of getReports()) {
+    const resolved = report.status === "resolved" || report.status === "dismissed";
+    if (!resolved) continue;
+    if (report.updatedAt < windowStart) continue;
+    if (action === "takedown") continue;
+    if (action === "dismiss" && report.status !== "dismissed") continue;
+    eligible.push({
+      id: report.id,
+      kind: "report",
+      action: report.status === "resolved" ? "report_resolved" : "report_dismissed",
+      targetId: report.targetId,
+      targetType: report.targetType,
+      createdAt: report.updatedAt,
+    });
+  }
+
+  for (const log of getModerationLogs()) {
+    if (log.createdAt < windowStart) continue;
+    if (action === "takedown" && !isTakedownAction(log.action)) continue;
+    if (action === "dismiss" && !isDismissAction(log.action)) continue;
+    eligible.push({
+      id: log.id,
+      kind: "log",
+      action: log.action,
+      targetId: log.targetId,
+      targetType: log.targetType,
+      createdAt: log.createdAt,
+    });
+  }
+
+  eligible.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return eligible;
+}
+
+export function selectAccuracyReviewSample<T>(
+  items: readonly T[],
+  sampleSize: number,
+  seed: string | number,
+): T[] {
+  if (sampleSize <= 0 || items.length === 0) return [];
+  const seedUint32 = typeof seed === "number" ? seed >>> 0 : hashSeedToUint32(seed);
+  const random = mulberry32(seedUint32);
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, Math.min(sampleSize, shuffled.length));
 }

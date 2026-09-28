@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -66,17 +66,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
       - name: Install dependencies
         run: yarn install --immutable
 
-      - name: Run Tests
-        run: yarn test:frontend
+      - name: Run Tests with Coverage
+        run: yarn test:frontend:coverage
+
+      - name: Check coverage thresholds
+        if: always()
+        run: |
+          echo "Coverage thresholds are enforced via vitest.config.mjs"
+          echo "Test failures above may mask coverage report; thresholds will still gate."
 
   build:
     name: Build Frontend

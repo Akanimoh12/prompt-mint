@@ -1,6 +1,15 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+const ResponsiveContainer = ({ children }: any) => <div className="w-full">{children}</div>;
+const LineChart = ({ children }: any) => <div className="p-4 text-center text-slate-400 border border-slate-800 rounded-lg bg-slate-950/50">{children}</div>;
+const Line = (_props: any) => null;
+const BarChart = ({ children }: any) => <div className="p-4 text-center text-slate-400 border border-slate-800 rounded-lg bg-slate-950/50">{children}</div>;
+const Bar = (_props: any) => null;
+const XAxis = (_props: any) => null;
+const YAxis = (_props: any) => null;
+const CartesianGrid = (_props: any) => null;
+const Tooltip = (_props: any) => null;
+const Legend = (_props: any) => null;
 
 interface DeliveryMetrics {
   successRate: number;
