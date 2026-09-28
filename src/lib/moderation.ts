@@ -220,3 +220,76 @@ export async function fetchPromptStatus(
   }
   return response.json();
 }
+
+/**
+ * Outcome of a moderation quality spot-check, mirroring the server-side type.
+ * - "correct"   – the original decision was the right call.
+ * - "incorrect" – the decision was wrong (e.g. false-positive takedown).
+ * - "disputed"  – reviewer is uncertain; needs escalation.
+ */
+export type ModerationOutcome = "correct" | "incorrect" | "disputed";
+
+export interface ModerationQualityEntry {
+  id: string;
+  action: string;
+  targetId: string;
+  targetType: string;
+  outcome: ModerationOutcome;
+  qualityScore: number;
+  createdAt: number;
+}
+
+/**
+ * Records a quality outcome for an existing moderation log entry.
+ *
+ * Requires the caller to hold a moderator wallet — `signMessage` is used to
+ * produce a short-lived signed auth token scoped to `"moderation-quality"`.
+ *
+ * @param logId        ID of the ModerationLogEntry to annotate.
+ * @param outcome      Reviewer verdict: "correct" | "incorrect" | "disputed".
+ * @param qualityScore Optional explicit score in [0.0, 1.0]; derived from
+ *                     `outcome` when omitted.
+ */
+export async function recordModerationQuality(params: {
+  moderatorAddress: string;
+  signMessage: SignMessageFn;
+  logId: string;
+  outcome: ModerationOutcome;
+  qualityScore?: number;
+  apiBase?: string;
+}): Promise<{ success: boolean; entry: ModerationQualityEntry }> {
+  const {
+    moderatorAddress,
+    signMessage,
+    logId,
+    outcome,
+    qualityScore,
+    apiBase = "/api/moderation/quality",
+  } = params;
+
+  const { signModeratorAuth } = await import("./auth/moderatorAuth");
+  const { moderatorTimestamp, moderatorSignature } = await signModeratorAuth(
+    moderatorAddress,
+    "moderation-quality",
+    signMessage,
+  );
+
+  const response = await fetch(apiBase, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      moderatorAddress,
+      moderatorTimestamp,
+      moderatorSignature,
+      logId,
+      outcome,
+      ...(qualityScore !== undefined && { qualityScore }),
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `Failed to record moderation quality (${response.status})`);
+  }
+  return data as { success: boolean; entry: ModerationQualityEntry };
+}
