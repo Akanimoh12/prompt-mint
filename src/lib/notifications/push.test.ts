@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   deliverPushOrFallback,
+  isPushSupported,
+  getPushPermissionStatus,
+  requestPushPermission,
   type PushNotificationCtor,
 } from "./push";
 import type { NotificationRecord } from "./store";
@@ -149,3 +152,30 @@ describe("deliverPushOrFallback", () => {
     expect(calls[0][1]?.tag).toBe("n1");
   });
 });
+
+describe("Push Permission Helpers (#750)", () => {
+  it("detects push support correctly", () => {
+    const { ctor } = makeCtor("granted");
+    expect(isPushSupported(ctor)).toBe(true);
+    expect(isPushSupported(null)).toBe(false);
+  });
+
+  it("retrieves current permission status", () => {
+    const { ctor: grantedCtor } = makeCtor("granted");
+    const { ctor: deniedCtor } = makeCtor("denied");
+
+    expect(getPushPermissionStatus(grantedCtor)).toBe("granted");
+    expect(getPushPermissionStatus(deniedCtor)).toBe("denied");
+    expect(getPushPermissionStatus(null)).toBe("unsupported");
+  });
+
+  it("requests permission using provided requester", async () => {
+    const customRequester = vi.fn(async () => "granted" as NotificationPermission);
+
+    const result = await requestPushPermission(customRequester);
+    expect(result).toBe("granted");
+    expect(customRequester).toHaveBeenCalledTimes(1);
+  });
+});
+
+
