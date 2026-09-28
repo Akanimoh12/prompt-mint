@@ -13,7 +13,7 @@ readme = "README.md"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 hmac = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 subtle = "2"
 thiserror = "2"
