@@ -216,6 +216,55 @@ Example response:
 
 Returns draft and ready-to-publish prompts for the connected creator wallet.
 
+## Moderation Endpoints
+
+### Submit a prompt report
+
+`POST /api/moderation/reports`
+
+Creates a pending report for moderator review. The request body accepts
+`promptId`, `reporterAddress`, `reason`, and an optional `description`.
+
+### List moderation reports
+
+`GET /api/moderation/reports`
+
+Requires an admin bearer token. Optional query parameters are `promptId`,
+`status`, and `assignedReviewer`. Use `assignedReviewer=unassigned` to find
+unassigned reports. Reports are returned in descending priority order, with oldest-first
+ordering when scores tie. Each report includes an explainable `priority` value:
+
+```json
+{
+  "score": 100,
+  "level": "critical",
+  "reasonWeight": 100,
+  "ageBonus": 0
+}
+```
+
+Priority combines report reason severity with a capped age bonus, so older
+unresolved reports cannot remain at the bottom of the queue indefinitely.
+
+### Assign a report to a reviewer
+
+`PATCH /api/moderation/reports/:reportId/assignment`
+
+Requires an admin bearer token. Send `{ "reviewerAddress": "g..." }` to assign
+the report, or `{ "reviewerAddress": null }` to return it to the unassigned
+queue. The optional `X-Moderator-Address` header records who made the change.
+The response includes `assignedReviewer`, `assignedAt`, and `assignedBy`.
+
+### Update moderation collaboration notes
+
+`PATCH /api/moderation/reports/:reportId/notes`
+
+Requires an admin bearer token. Send `{ "notes": "..." }` to replace the
+moderation team's shared notes, or an empty string to clear them. Notes support
+multiline text up to 5,000 characters. The optional `X-Moderator-Address` header
+records who last edited the notes; the response includes
+`collaborationNotesUpdatedAt` and `collaborationNotesUpdatedBy`.
+
 ### Version updates
 
 `POST /api/prompts/version`

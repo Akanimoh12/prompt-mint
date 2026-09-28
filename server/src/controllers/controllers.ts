@@ -3,6 +3,12 @@ import connectDb from "../db/connectDb";
 import User from "../models/User";
 import Prompt from "../models/Prompt";
 import Report from "../models/Report";
+import {
+  compareModerationPriority,
+  getModerationPriority,
+} from "../services/moderationPriority";
+import { buildReportAssignmentUpdate } from "../services/moderationAssignment";
+import { buildCollaborationNotesUpdate } from "../services/moderationNotes";
 import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
 import {
@@ -389,23 +395,127 @@ export const GetPromptReports = async (
       });
     }
 
-    const { searchParams } = new URL(req.url);
-    const promptId = searchParams.get("promptId");
+    const promptId = typeof req.query.promptId === "string" ? req.query.promptId : null;
+    const status = typeof req.query.status === "string" ? req.query.status : null;
+    const assignedReviewer = typeof req.query.assignedReviewer === "string"
+      ? req.query.assignedReviewer
+      : null;
 
     const query: any = {};
     if (promptId) {
       query.promptId = promptId;
     }
+    if (status) {
+      query.status = status;
+    }
+    if (assignedReviewer) {
+      query.assignedReviewer = assignedReviewer === "unassigned"
+        ? null
+        : assignedReviewer.toLowerCase();
+    }
 
-    const reports = await Report.find(query)
-      .sort({ createdAt: -1 });
+    const reports = await Report.find(query).lean();
+    const now = Date.now();
+    const prioritizedReports = reports
+      .map((report: any) => ({
+        ...report,
+        priority: getModerationPriority({
+          reason: report.reason,
+          createdAt: report.createdAt,
+          now,
+        }),
+      }))
+      .sort((a: any, b: any) =>
+        compareModerationPriority(
+          { reason: a.reason, createdAt: a.createdAt, now },
+          { reason: b.reason, createdAt: b.createdAt, now },
+        ),
+      );
 
-    return res.json(reports);
+    return res.json(prioritizedReports);
   } catch (err) {
     console.error("Get reports error:", err);
     return res.status(500).json({
       error: (err as Error).message || "Failed to fetch reports",
     });
+  }
+};
+
+export const AssignPromptReport = async (
+  req: Request,
+  res: Response,
+): Promise<Response<any>> => {
+  try {
+    await connectDb();
+
+    const adminToken = req.headers.authorization?.split(" ")[1];
+    if (!adminToken) {
+      return res.status(401).json({ error: "Unauthorized: Admin token required" });
+    }
+
+    const assignedBy = typeof req.headers["x-moderator-address"] === "string"
+      ? req.headers["x-moderator-address"]
+      : null;
+    const update = buildReportAssignmentUpdate({
+      reviewerAddress: req.body?.reviewerAddress,
+      assignedBy,
+    });
+    const report = await Report.findByIdAndUpdate(
+      req.params.reportId,
+      update,
+      { new: true, runValidators: true },
+    ).lean();
+
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+
+    return res.json(report);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("reviewerAddress")) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("Assign report error:", err);
+    return res.status(500).json({ error: "Failed to assign report" });
+  }
+};
+
+export const UpdatePromptReportNotes = async (
+  req: Request,
+  res: Response,
+): Promise<Response<any>> => {
+  try {
+    await connectDb();
+
+    const adminToken = req.headers.authorization?.split(" ")[1];
+    if (!adminToken) {
+      return res.status(401).json({ error: "Unauthorized: Admin token required" });
+    }
+
+    const updatedBy = typeof req.headers["x-moderator-address"] === "string"
+      ? req.headers["x-moderator-address"]
+      : null;
+    const update = buildCollaborationNotesUpdate({
+      notes: req.body?.notes,
+      updatedBy,
+    });
+    const report = await Report.findByIdAndUpdate(
+      req.params.reportId,
+      update,
+      { new: true, runValidators: true },
+    ).lean();
+
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+
+    return res.json(report);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("notes")) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("Update report notes error:", err);
+    return res.status(500).json({ error: "Failed to update collaboration notes" });
   }
 };
 
