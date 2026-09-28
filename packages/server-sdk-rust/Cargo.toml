@@ -19,7 +19,7 @@ subtle = "2"
 thiserror = "2"
 ureq = { version = "2", features = ["json"] }
 url = "2"
-rand = "0.8"
+rand = "0.9"
 base64 = "0.22"
 chrono = "0.4"
 
