@@ -4,10 +4,55 @@ import { apiError, ErrorCode } from "../../src/lib/api/errorCodes";
 import {
   ACCURACY_SAMPLE_DEFAULT_SEED,
   getAccuracyEligibleItems,
+  getModerationLogById,
   selectAccuracyReviewSample,
   verifyModeratorAuth,
   type AccuracySampleActionFilter,
+  type AccuracySampleItem,
 } from "./data";
+
+/**
+ * Derives an accuracy summary from the sampled items that already have a
+ * quality outcome recorded.  Only items that are log entries with an outcome
+ * contribute to the percentages; items without outcomes are counted separately
+ * so callers know how much of the sample remains un-reviewed.
+ */
+function buildAccuracySummary(sample: AccuracySampleItem[]): {
+  reviewed: number;
+  correct: number;
+  incorrect: number;
+  disputed: number;
+  pending: number;
+  correctPct: number | null;
+} {
+  let correct = 0;
+  let incorrect = 0;
+  let disputed = 0;
+  let pending = 0;
+
+  for (const item of sample) {
+    if (item.kind !== "log") {
+      // Reports don't carry outcome data yet — count as pending.
+      pending += 1;
+      continue;
+    }
+    const entry = getModerationLogById(item.id);
+    if (!entry?.outcome) {
+      pending += 1;
+      continue;
+    }
+    if (entry.outcome === "correct") correct += 1;
+    else if (entry.outcome === "incorrect") incorrect += 1;
+    else disputed += 1;
+  }
+
+  const reviewed = correct + incorrect + disputed;
+  // correctPct is null when nothing has been reviewed yet — avoids serving
+  // a fictional percentage (the original guard this block replaces).
+  const correctPct = reviewed > 0 ? Math.round((correct / reviewed) * 10000) / 100 : null;
+
+  return { reviewed, correct, incorrect, disputed, pending, correctPct };
+}
 
 function isAccuracyAction(value: unknown): value is AccuracySampleActionFilter {
   return value === "takedown" || value === "dismiss" || value === "all";
@@ -65,13 +110,16 @@ export default async function handler(req: any, res: any) {
     const eligible = getAccuracyEligibleItems({ action, since });
     const sample = selectAccuracyReviewSample(eligible, sampleSize, seed);
 
-    // accuracySummary is intentionally omitted: reports and logs carry no
-    // audited/appealed outcome field, so any percentage would be fictional.
-    // It should only be added once an explicit review outcome exists.
+    // Build an accuracy summary from log entries that already have an outcome
+    // recorded via POST /api/moderation/quality.  correctPct is null when no
+    // entries in the sample have been reviewed yet, preventing fictional stats.
+    const accuracySummary = buildAccuracySummary(sample);
+
     res.status(200).json(
       withVersion(
         {
           sample,
+          accuracySummary,
           meta: {
             sampleSize,
             seed,
