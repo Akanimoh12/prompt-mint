@@ -10,6 +10,7 @@ permissions:
   attestations: write
 
 jobs:
+  # ── Frontend build + Vercel deploy ─────────────────────────────────────────
   deploy-frontend:
     runs-on: ubuntu-latest
     permissions:
@@ -72,6 +73,8 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
+  # ── Soroban contract build + WASM artifacts ─────────────────────────────────
+  # Toolchain must be ≥ 1.91.0 — soroban-sdk ≥ 26 requires it.
   contract-build:
     runs-on: ubuntu-latest
     permissions:
@@ -85,32 +88,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.91.0'
+          toolchain: "1.91.0"
           targets: wasm32v1-none
 
       - name: Cache cargo registry
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache cargo index
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-git-
-
-      - name: Cache cargo build
-        uses: actions/cache@v6
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-target-
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Build contract
         run: cargo build --release -p prompt-hash --target wasm32v1-none
@@ -142,6 +131,7 @@ jobs:
             wasm-checksums.txt.sha256
           retention-days: 30
 
+  # ── Production smoke test ───────────────────────────────────────────────────
   production-smoke-test:
     name: Verify production health endpoints
     needs: deploy-frontend
@@ -167,6 +157,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ── Sign artifacts ──────────────────────────────────────────────────────────
   sign-artifacts:
     needs: [contract-build, deploy-frontend]
     runs-on: ubuntu-latest
@@ -202,8 +193,6 @@ jobs:
           path: ./artifacts
 
       - name: Generate deploy manifest
-        # Paths are flat basenames so the manifest verifies against a
-        # `gh release download` directory. See docs/deploy-manifest.md.
         run: |
           mkdir -p manifest-staging
           cp ./artifacts/wasm/*.wasm ./artifacts/frontend-checksums.txt manifest-staging/
@@ -280,7 +269,7 @@ jobs:
           node-version: "22"
           cache: "yarn"
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: yarn install --immutable
 
       - name: Generate frontend SBOM (CycloneDX)
@@ -291,10 +280,10 @@ jobs:
             --output-format JSON \
             --output-file sbom/frontend-sbom.json
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain for cargo-cyclonedx
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.91.0'
+          toolchain: "1.91.0"
           targets: wasm32v1-none
 
       - name: Install cargo-cyclonedx
@@ -308,11 +297,27 @@ jobs:
             --override-filename contract-sbom
           mv contracts/prompt-hash/contract-sbom.json sbom/contract-sbom.json
 
-      - name: Generate server SBOM
+      - name: Use Node.js for server SBOM (no Corepack needed)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        working-directory: server
+        # --package-lock-only avoids touching node_modules and prevents
+        # `npm ls` ELSPROBLEMS when the lock file is ahead of installed deps.
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Generate server SBOM (CycloneDX)
         run: |
           mkdir -p sbom
           cd server
-          npx -y @cyclonedx/cyclonedx-npm --output-format JSON --output-file ../sbom/server-sbom.json
+          npx -y @cyclonedx/cyclonedx-npm \
+            --package-lock-only \
+            --output-format JSON \
+            --output-file ../sbom/server-sbom.json
 
       - name: Create SBOM manifest
         run: |
@@ -332,6 +337,7 @@ jobs:
           path: sbom/
           retention-days: 90
 
+  # ── Create release ──────────────────────────────────────────────────────────
   create-release:
     needs: [sign-artifacts, contract-build, generate-sbom]
     runs-on: ubuntu-latest
@@ -357,10 +363,8 @@ jobs:
       - name: Set up cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: 'v2.4.3'
+          cosign-release: "v2.4.3"
 
-      # Gate the release on provenance: the deploy workflow badge in README and
-      # docs/artifact-verification.md is only green when this step passes.
       - name: Verify deployment provenance
         run: |
           set -euo pipefail
